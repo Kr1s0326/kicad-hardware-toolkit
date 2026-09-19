@@ -416,7 +416,39 @@ def test_pad_shape_and_panels():
         check_exact("panel_pads/② %s 面板画出了焊盘（填充像素 %d）" % (kind, n),
                     n > 200, True)
 
-    # ③ 尺寸线必须量在**正确的轴**上。
+    # ③ 每张测量图都必须：画出整颗器件的焊盘环 + 高亮被量的部分。
+    #    踩过的坑：
+    #      * 有几个面板只放两个焊盘的放大图，看图的人不知道量的是整颗
+    #        器件里的哪儿；
+    #      * draw_pads 支持 hi 高亮，但 peripheral 族从来没传过 ——
+    #        e / b / L 三张图长得一模一样，分不出在量哪个；
+    #      * D / E 两张走 core/common.py，连散热焊盘都没标（一会儿蓝一会儿灰）。
+    HILITE, EXPOSED = D.PAD_HI, D.PAD_FILL_EXPOSED
+    counts = {k: (0, 0) for k in ("lead_pitch", "lead_width", "lead_length",
+                                  "body_w", "ep_x")}
+    for k, v in (("lead_pitch", 0.5), ("lead_width", 0.28),
+                 ("lead_length", 1.3), ("body_w", 7.2), ("ep_x", 3.1)):
+        px = list(fam.panel(k, ctx, {}, v, {}, "T").convert("RGB").getdata())
+        counts[k] = (sum(1 for q in px if q == HILITE),
+                     sum(1 for q in px if q == EXPOSED))
+    # 哪些面板该出现哪种标记：
+    #   e / b / L 量的是普通焊盘 -> 红色高亮 PAD_HI
+    #   ep_x 量的是散热焊盘     -> 蓝色 PAD_FILL_EXPOSED（蓝色在绘制时覆盖红色，
+    #                             所以散热盘永远不会是红的）
+    #   body_w 量的是**本体**   -> 本来就不该高亮任何焊盘；但整颗 IC 视图里
+    #                             散热盘仍应被标出来（以前走 common.py 时是灰的）
+    for k in ("lead_pitch", "lead_width", "lead_length"):
+        hi, ex = counts[k]
+        check_exact("panel_hl/③ %s 用红色高亮被量的焊盘（%d 像素）" % (k, hi),
+                    hi > 60, True)
+    check_exact("panel_hl/③ ep_x 用蓝色标出散热焊盘（%d 像素）"
+                % counts["ep_x"][1], counts["ep_x"][1] > 60, True)
+    check_exact("panel_hl/③ body_w 不高亮任何焊盘（量的是本体，%d 像素）"
+                % counts["body_w"][0], counts["body_w"][0] == 0, True)
+    check_exact("panel_hl/③ body_w 仍标出散热焊盘（%d 像素）"
+                % counts["body_w"][1], counts["body_w"][1] > 60, True)
+
+    # ④ 尺寸线必须量在**正确的轴**上。
     #    踩过的坑：lead_length 的两支写反了 —— 左/右引脚本该沿 x 量长边，
     #    却用了 dim_v，画出一条 0.8 的**竖直线**，视觉上跨两个间距，
     #    看着像在量 pitch。数值碰巧对，图是错的。

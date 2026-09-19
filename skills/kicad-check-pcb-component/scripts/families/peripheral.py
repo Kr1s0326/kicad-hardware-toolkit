@@ -139,6 +139,23 @@ def _map_view(ctx, pad=0.5):
     return (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
 
 
+def _full_view(ctx, pad=1.9):
+    """整颗器件的视图窗口 + 留给尺寸线/标签的空白坐标。
+
+    测量图一律以**整颗 IC** 为背景（而不是只看几个焊盘），这样看图的人
+    能知道"量的是整颗器件里的哪个位置"。pad 是给尺寸线/标签留的空白带。
+
+    返回 (View, dim_x, dim_y)：
+      dim_x  左空白带里放**竖直**尺寸线的世界 x
+      dim_y  上空白带的世界 y
+    注意 put_label() 收的是**像素**坐标，要用 V.pt() 转 —— 直接世界坐标
+    传进去会被画到画布外面（标签被裁掉）。
+    """
+    win = _map_view(ctx, pad)
+    V = D.View(win)
+    return V, win[0] + pad * 0.65, win[3] - pad * 0.35
+
+
 def _draw_map(d, V, ctx, hi_xy=()):
     """画焊盘图。hi_xy 里的 (x,y)（**相对坐标**）会被高亮。
 
@@ -179,18 +196,20 @@ def panel(kind, ctx, row, value, extra, sym):
             leads = sorted(_leads(ctx), key=lambda p: p[1])
         a, b = _rel(leads[0]), _rel(leads[1])
         vertical = side in ("left", "right")
+        # 整颗 IC 作背景 + 高亮被量的两个引脚（而不是只放两个焊盘的放大图）——
+        # 看报告的人需要知道"量的是整颗器件里哪两个脚"，而不只是"这两个块"。
+        V, dim_x, dim_y = _full_view(ctx)
+        img, d = D.new_panel("%s  引脚间距 e = %.3f mm" % (sym, value))
+        _draw_map(d, V, ctx, hi_xy=[(a[0], a[1]), (b[0], b[1])])
         if vertical:
-            V = D.View((a[0] - a[2] * 2.2, a[1] - a[3] * 1.8,
-                        a[0] + a[2] * 2.2, b[1] + b[3] * 1.8))
-            img, d = D.new_panel("%s  引脚间距 e = %.3f mm" % (sym, value))
-            _draw_map(d, V, ctx, hi_xy=[(a[0], a[1]), (b[0], b[1])])
-            D.dim_v(d, V, a[1], b[1], a[0] - a[2] * 1.5, "%.4f" % value)
+            D.dim_v(d, V, a[1], b[1], dim_x, "")
+            mid = (a[1] + b[1]) / 2
+            D.put_label(d, V.pt(dim_x, mid), "%.4f" % value, centre=True)
         else:
-            V = D.View((a[0] - a[2] * 1.8, a[1] - a[3] * 2.2,
-                        b[0] + b[2] * 1.8, a[1] + a[3] * 2.2))
-            img, d = D.new_panel("%s  引脚间距 e = %.3f mm" % (sym, value))
-            _draw_map(d, V, ctx, hi_xy=[(a[0], a[1]), (b[0], b[1])])
-            D.dim_h(d, V, a[0], b[0], a[1] - a[3] * 1.5, "%.4f" % value)
+            D.dim_h(d, V, a[0], b[0], dim_y, "")
+            mid = (a[0] + b[0]) / 2
+            D.put_label(d, (V.pt(mid, dim_y)[0], V.pt(mid, dim_y)[1] - 26),
+                        "%.4f" % value, centre=True)
         return img
 
     if kind in ("pad_span_x", "pad_edge_span_x", "pad_span_y", "pad_edge_span_y"):
@@ -216,7 +235,7 @@ def panel(kind, ctx, row, value, extra, sym):
         leads = [_rel(q) for q in _leads(ctx)]
         p = min(leads, key=lambda q: min(q[2], q[3]))
         x, y, w, h, side = p
-        V = D.View((x - w * 2, y - h * 2, x + w * 2, y + h * 2))
+        V, dim_x, dim_y = _full_view(ctx)
         img, d = D.new_panel("%s  %s = %.3f mm"
                              % (sym, "引脚宽度 b" if kind == "lead_width"
                                 else "引脚长度 L", value))
@@ -226,28 +245,37 @@ def panel(kind, ctx, row, value, extra, sym):
         #   上/下引脚：w 沿 y（长边）、h 沿 x（窄边）
         # 踩过的坑：lead_length 的两支正好写反了 —— 左/右引脚用 dim_v
         # 量出 0.8 的**竖直线**，视觉上跨了两个间距，看着像在量 pitch。
-        # 数值碰巧对（长边就是 0.8），但图画错了，反倒是“看着像错的”。
         tb = side in ("top", "bottom")
+        # 尺寸线用空文本，值自己放 —— 内置标签紧贴着线，在全 IC 视图里
+        # 会压到焊盘列上。窄边放左空白带；长边就画在被高亮的那个焊盘上
+        # （细间距器件在这个方向上没有别的空白可放）。
         if kind == "lead_width":                 # b = 窄边
             if tb:
-                D.dim_h(d, V, x - h / 2, x + h / 2, y - h * 1.6, "%.4f" % value)
+                D.dim_h(d, V, x - h / 2, x + h / 2, dim_y, "")
+                D.put_label(d, (V.pt(x, dim_y)[0], V.pt(x, dim_y)[1] - 26),
+                            "%.4f" % value, centre=True)
             else:
-                D.dim_v(d, V, y - h / 2, y + h / 2, x - w * 1.2, "%.4f" % value)
+                D.dim_v(d, V, y - h / 2, y + h / 2, dim_x, "")
+                D.put_label(d, V.pt(dim_x, y), "%.4f" % value, centre=True)
         else:                                    # L = 长边
             if tb:
-                D.dim_v(d, V, y - w / 2, y + w / 2, x - w * 1.2, "%.4f" % value)
+                D.dim_v(d, V, y - w / 2, y + w / 2, dim_x, "")
+                D.put_label(d, V.pt(dim_x, y), "%.4f" % value, centre=True)
             else:
-                D.dim_h(d, V, x - w / 2, x + w / 2, y - h * 1.6, "%.4f" % value)
+                D.dim_h(d, V, x - w / 2, x + w / 2, y, "")
+                D.put_label(d, (V.pt(x, y)[0], V.pt(x, y)[1] - 26),
+                            "%.4f" % value, centre=True)
         return img
 
     if kind in ("ep_x", "ep_y"):
         ep = info["exposed"]
         ox, oy = ctx["origin"]
         x, y = ep["x"] - ox, ep["y"] - oy
-        V = D.View((x - ep["w"], y - ep["h"], x + ep["w"], y + ep["h"]))
+        # 散热焊盘也用整颗 IC 作背景 —— 它在整颗器件里的位置本身就是信息
+        V, dim_x, dim_y = _full_view(ctx)
         img, d = D.new_panel("%s  散热焊盘 %s = %.3f mm"
                              % (sym, "D2" if kind == "ep_x" else "E2", value))
-        _draw_map(d, V, ctx)
+        _draw_map(d, V, ctx, hi_xy=[(x, y)])
         if kind == "ep_x":
             D.dim_h(d, V, x - ep["w"] / 2, x + ep["w"] / 2, y - ep["h"] * 0.7,
                     "%.4f" % value)
