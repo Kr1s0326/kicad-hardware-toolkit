@@ -2,12 +2,41 @@
 
 ## 引脚表（-> `pins[]`）
 
+### 先试自动抽
+
 TI 手册的引脚表在 "Pin Configuration and Functions" 一节，标记是
 **`Table 5-1`**。抽法：`kicad-check-sch-component/scripts/pdf_pins.py`。
 
 ```bash
 python ../kicad-check-sch-component/scripts/pdf_pins.py ina239.pdf --dump
 ```
+
+### 抽不出来怎么办 —— 常见，不是例外
+
+`pdf_pins.py` 认的是"有 TYPE 列的英文引脚表"（TI 那套）。以下都认不出来：
+
+| 情况 | 例子 | 征兆 |
+|---|---|---|
+| 表里没有 TYPE 列 | Infineon PSoC 62 的 `Table 7`（只有 `信号 / 100-TQFP / 68-QFN / 49-WLCSP`）| `找不到引脚表页` |
+| 中文/其他版式 | Espressif ESP32-S3 中文手册 | 抽到 0 条 或乱码 |
+| 下标被拆成两个词 | PSoC 的 `V_DDD` 在 PDF 里是 `V` + `DDD`，且第二块**基线更低** | 信号名缺头少尾 |
+| 页面是矢量图 | 尺寸图上的数字 | 手动读图 |
+
+**退路不是"手抄一遍"，是写个专用解析器。** 用 pdfplumber 直接读**词坐标**：
+
+```python
+words = page.extract_words()          # 每个词带 x0/x1/top，不依赖表格识别
+# 1) 先用无下标的列（如球位列 A11/C7）找出每行的主 top
+# 2) 再把 ±8pt 内的词都归到那一行 —— 下标块比主行低 4pt 左右
+# 3) 按 x 区间把词切成列，拼接信号名
+```
+
+完整例子见 `D:/Project/Current Monitor/Infineon 6245/src/extract_table7.py`。
+
+**这样做还有个额外好处：** 它和手抄的那份是**两条独立的路**，逐条比对
+就能抳出手抄错误 —— 而直接手抄只有一条路，错了无从发现。
+
+抽完（不管是哪种方式）把表打出来**逐条过一遍**：映射规则是启发式的，不是真理。
 
 ### 坑：目录页也会命中
 
@@ -30,7 +59,7 @@ python ../kicad-check-sch-component/scripts/pdf_pins.py ina239.pdf --dump
    -> etype = open_collector      (不是 output)
 ```
 
-抽完**必须把表打出来人看一眼**。映射规则是启发式的，不是真理。
+抽完**把表打出来逐条核一遍**（500 行的表也要核）。映射规则是启发式的，不是真理。
 
 ## 封装数字（-> `package{}`）
 
@@ -58,7 +87,8 @@ TI 的图号写在页面右下（INA239 是 `4221984/A`），**记进 spec 的�
 ### 拿不到图怎么办
 
 `pdfplumber` 抽不出机械图的数字（图上的数字是矢量文本，位置散乱）。
-这一步基本靠人眼看图录入 —— **这没关系，但要意识到**：
+做法是把那一页**渲染成 PNG**（`page.to_image(resolution=300)`）再读数 ——
+由 AI/LLM 读图录入，不是"只能人工"。**但要意识到**：
 
 > 校验侧只能证明"封装 = spec"。如果这个数录入时就看错了，
 > 校验会一致地 PASS。

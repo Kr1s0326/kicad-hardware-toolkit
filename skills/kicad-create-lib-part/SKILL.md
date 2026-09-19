@@ -1,6 +1,6 @@
 ---
 name: kicad-create-lib-part
-description: Generates a complete KiCad library part - a schematic symbol (.kicad_sym) plus a PCB footprint (.kicad_mod) plus the pin-number/pad-number link - from one part_spec.json that holds the datasheet pin table and the package drawing numbers. Handles symbol house style (200 mil within a functional group, 400 mil between groups, top-aligned sides, power pins on top/bottom, declared pin ordering) and footprint conventions (land-pattern pads, silkscreen clipped around pads, fab body outline, 12-segment courtyard, 3D model link) and also emits the groups.json and dimension spec the check skills consume. Use when asked to create, generate, write or add a KiCad symbol, footprint, 原理图符号, PCB 封装, .kicad_sym, .kicad_mod, or a new part in a library from a datasheet or a package drawing.
+description: Generates a complete KiCad library part - a schematic symbol (.kicad_sym), a PCB footprint (.kicad_mod), and the pin-number/pad-number link - from one part_spec.json holding the datasheet pin table and package drawing numbers. Symbol house style is 200 mil within a functional group and 400 mil between groups (fixed, never per-part), top-aligned sides, power pins on top/bottom. Footprint conventions by family: peripheral (QFN/QFP/SOIC/TSSOP/SOT-23/DPAK) and chip (0402-1206/SOD/MELF) use roundrect land pads, silkscreen clipped around pads, fab outline and a 12-segment courtyard; grid_array (WLCSP/CSP/BGA/LGA) uses circular pad_prop_bga pads placed straight from the JEDEC ball name, a rectangular courtyard at body +1.0mm, and a Fab chamfer of 0.5*min. Also emits the groups.json and dimension spec the check skills consume. Use when asked to create, generate, write or add a KiCad symbol, footprint, 原理图符号, PCB 封装, .kicad_sym, .kicad_mod, or a new part in a library from a datasheet or a package drawing.
 license: MIT
 ---
 
@@ -58,9 +58,11 @@ python ../kicad-check-pcb-component/scripts/check_footprint.py \
 模板：[assets/part_spec_template.json](assets/part_spec_template.json)（里面填的就是 TI INA239 的真实数据）。
 
 ```
-pins[]          ← 手册的 Pin Functions 表（号 / 名 / 电气类型）
+pins[]          ← 手册的 Pin Functions 表（号 / 名）
+                   + 电气类型与所在边（手册多半不写，由 AI/LLM 判）
 groups{}        ← 哪些引脚是同一功能（手册不写，由 AI/LLM 判断）
 symbol_style{}  ← house style（间距 / 分组间距 / 引脚长 / 本体宽 / 对齐方式）
+                   **200 / 400 固定，不按器件改**
 package{}       ← 手册的 Package Outline + Example Board Layout 图
 ```
 
@@ -104,7 +106,8 @@ ATmega328P、PCA9555、TCA9548A，官方一律组内 2.54mm / 组间 5.08mm —�
 真嫌大就重新分配引脚到哪条边（把 `groups{}` 的两侧配平），那是布局的事。
 
 历史：CY8C6245 第一版曾改成 100 mil，与库里的 ESP32-S3（200 mil）不一致，
-已改回。`build_spec.py` 的自检现在会把非 200/400 当错误报出来。
+已改回。现在`make_part.py` 生成时会对非 200/400 发警告，
+`references/symbol-rules.md` 与库根 `README.md` 都写明了这一条。
 
 ### 本体宽度由三个约束一起定（不是只靠 `body_half_width_mil` 拍）
 
@@ -132,7 +135,7 @@ ATmega328P、PCA9555、TCA9548A，官方一律组内 2.54mm / 组间 5.08mm —�
 `side_align: "center"` 可改成每边各自居中。**顶对齐更常见**，因为左右两侧的
 第一个引脚会对上，跨侧读数更容易。
 
-### 封装
+### 封装 —— **引脚族**（`peripheral` / `chip`；球阵族看下一节）
 
 | 元素 | 规则 | 校准依据 |
 |---|---|---|
@@ -140,9 +143,12 @@ ATmega328P、PCA9555、TCA9548A，官方一律组内 2.54mm / 组间 5.08mm —�
 | 焊盘 Y 方向 | **+Y 是向下**，所以 pad1（左上）的 y 是负的 | JEDEC 编号惯例 |
 | 丝印框 | 本体/2 + 0.11 | 官方 MSOP-10 与 SOIC-8 逐值对上 |
 | 丝印被焊盘裁掉 | 裁掉边界 = 焊盘边缘 + 0.2 + 丝印半宽 0.06 = **+0.26** | 同上，两个封装都吻合 |
-| 装配层 | 本体真实外形，pin1 角倒角 0.75 | KiCad 惯例 |
+| 装配层 | 本体真实外形，pin1 角倒角 **0.75** | KiCad 惯例 |
 | 外框 | `max(本体, 焊盘外沿) + 0.25`，**12 段十字形而非矩形** | 官方 MSOP-10 与 SOIC-8 都是 12 段，逐段对上 |
 | Pin1 三角标 | 丝印角点外 0.16 / 0.55 | 官方库同款 |
+
+> 表里的**倒角 0.75** 与**外框 +0.25 / 12 段十字**是这一族专用的。
+> 球阵族两个值都不一样（下一节），别看错表。
 
 ### 球栅阵列（`package.family = "grid_array"`）
 
@@ -178,11 +184,46 @@ WLCSP / CSP / BGA / LGA 走另一套几何，**不要照搬上面那张表**。�
 0.280 / 0.341 交替的，单个 `row_pitch` 表达不了 —— 而图纸恰恰是用交替行距
 才凑出 E1=2.484 和 eE1s/eE2s/eE3s 三个数的。
 
-`build_spec.py` 里的自检会拿 `sqrt(col_pitch² + 行距²)` 反算 eS1/eS2 与图纸对账：
-对得上，说明行距表没抄错。这个判据不依赖眼睛。
+**行距表要拿斜向球距对账。** 图纸给的行距是 0.280 / 0.341 交替的，
+而 eS1 / eS2 恰恰是这两个行距与列栅格合成的斜距：
 
-A1 通常是**空位**（图纸注明 `+` = depopulated），但矩阵位数 MD/ME 仍把它算进去 ——
-所以 `N = MD × ME − 空位数`，别用 N 去反推 MD。
+```
+sqrt(0.21² + 0.280²) = 0.3500   ← 图纸 eS1 = 0.35
+sqrt(0.21² + 0.341²) = 0.4005   ← 图纸 eS2 = 0.40
+0.280 + 0.341        = 0.621    ← 图纸 eE2s = 0.621
+```
+
+三条数对上了，说明行距表没抄错。**这个判据不依赖眼睛** —— 写进项目 spec 的
+自检里（CY8C6245 的 `src/build_spec.py: _selfcheck()` 就是照这个写的）。
+
+A1 通常是**空位**（图纸注明 `+` = depopulated）。注意 N 和 MD×ME **不是一回事**：
+SG-XFWLB-49 的 MD×ME = 11×9 = **99**，而棋盘格交错阵列只有 **50** 个位被占，
+再扣掉 A1 才得到 N = **49**。所以：
+
+```
+N = (交错图案下的占位数) − A1 之类的空位数      不是 MD × ME − 空位数
+```
+
+**别用 N 去反推 MD**，也别指望 `MD × ME` 能对上 `N` —— 校验侧的 `matrix_cols`
+是按列栅格间距除出来的，与 N 无关。
+
+## 布局
+
+```
+skills/kicad-create-lib-part/
+├── scripts/
+│   ├── make_part.py    ★ 总入口：spec -> 符号 + 封装 + groups.json + fp.spec.json
+│   ├── kicad_io.py     格式版本探测（probe）与可加载性检查（loadable）
+│   └── selftest.py     87 项黄金测试（纯标准库，不需要 CAD）
+├── references/         symbol-rules / footprint-rules / kicad-formats /
+│                       datasheet-extract
+└── assets/part_spec_template.json
+
+<toolkit>/shared/        ← 三个 skill 共用；**不在本 skill 的 scripts/ 下**
+└── kitext.py           KiCad 文本渲染常数（与 symbol_lint.py 共用）
+```
+
+**本 skill 里没有一行渲染代码。** 那是有意的 —— 见上面「本 skill 的边界」。
 
 ## 输出可加载性检查
 

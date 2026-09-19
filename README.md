@@ -190,17 +190,27 @@ python $TK/skills/kicad-check-pcb-component/scripts/check_footprint.py \
 
 ## 设计约定
 
-以下三条影响使用方式，非实现细节。
+以下四条影响使用方式，非实现细节。
 
-**分组必须显式声明。** "组间 400 mil" 这条规则在几何上不可判定：左侧
-`VBUS(12.7) ─400mil─ IN+(2.54) ─200mil─ IN−(−2.54)` 中将 `IN+` 移至 7.62，
-即变为 `200mil / 400mil`，两种排列都满足"组内 200 / 组间 400"，仅分组不同。
-因此分组是输入而非推断结果。未提供分组时脚本会明确报告该规则未校验，
-并把几何推断出的分组与声明的分组对账，不一致即判 FAIL。
+**引脚间距固定 200 / 400 mil，全库统一，不按器件改。** 这不是默认值而是风格
+约定：同一个库里混着 100 mil 和 200 mil 的符号，读图的人每换一颗器件都要重新
+建立比例感。官方库偏好 100 mil（STM32/ATmega/PCA9555 量出来都是 2.54mm），
+但那是他们的风格。代价是引脚多时符号很大（49 脚 → 实体 55.9 × 121.9 mm），
+认了；真嫌大就重排 `groups{}` 把两侧配平，不要改 pitch。
+`make_part.py` 会对偏离发警告，详见
+[references/symbol-rules.md](skills/kicad-create-lib-part/references/symbol-rules.md)。
 
-**间距取值须为 100 mil 的整数倍。** 顶对齐时首个引脚的 y 坐标为最大跨度的一半。
+**间距值必须是 100 mil 的整数倍。** 这是几何硬约束，与上一条不同。
+顶对齐时首个引脚的 y 坐标为最大跨度的一半；
 `pitch_mil=150` / `group_gap_mil=300` 会产生 9.525 mm，不在 50 mil 连接栅格上，
 导致引脚无法连线，而符号外观完全正常。`make_part.py` 生成后会自检并告警。
+
+**分组必须显式声明 —— 由 AI/LLM 判。** "组间 400 mil" 这条规则在几何上不可
+判定：左侧 `VBUS(12.7) ─400mil─ IN+(2.54) ─200mil─ IN−(−2.54)` 中将 `IN+`
+移至 7.62，即变为 `200mil / 400mil`，两种排列都满足"组内 200 / 组间 400"，
+仅分组不同。因此分组是输入而非推断结果（而"该分哪几组"这个语义判断，
+由 AI/LLM 从手册上下文得出）。未提供分组时脚本会明确报告该规则未校验，
+并把几何推断出的分组与声明的分组对账，不一致即判 FAIL。
 
 **判定同时依据返回码与输出文本。** `kicad-cli pcb drc` 在存在违规时返回码可能为 0
 （除非加 `--exit-code-violations`）；加载失败返回 2，成功时输出"未更新"。
@@ -213,11 +223,12 @@ kicad-hardware-toolkit/
 ├── package.json                    pi 包清单
 ├── requirements.txt
 ├── .github/workflows/test.yml      CI
-├── shared/                         两个校验 skill 共用，各一份
-│   ├── toolchain.py                外部工具定位
+├── shared/                         三个 skill 共用，**只有一份**
+│   ├── toolchain.py                外部工具定位（kicad-cli 等）
 │   ├── cli.py                      入口错误处理与退出码
 │   ├── render.py                   渲染：SVG→PNG、3D
 │   ├── pinmap.py                   引脚↔焊盘契约
+│   ├── kitext.py                   KiCad 文本渲染常数（create 与 check-sch 共用）
 │   └── render-and-look.md          目视清单与结论措辞规范
 └── skills/
     ├── kicad-create-lib-part/
@@ -235,6 +246,7 @@ kicad-hardware-toolkit/
     │                               pin_report, selftest
     └── kicad-check-pcb-component/
         ├── SKILL.md
+        ├── assets/spec_template.json
         ├── references/families.md
         └── scripts/
             ├── check_footprint, measure_component, drc, fit3d,
@@ -247,15 +259,18 @@ kicad-hardware-toolkit/
 `core/` 与封装类型无关；`families/` 按封装族划分（网格阵列 / 边引脚 / 两端子），
 定位问题时据此缩小范围。
 
+> **`render.py` / `pinmap.py` / `kitext.py` 在 `shared/`，不在任何 skill 的
+> `scripts/` 下。** 从某个 skill 目录引用时用 `../../shared/xxx.py`。
+
 ## 测试
 
 三个 selftest 不需要 CAD 文件与网络。量测用例仅依赖标准库；
 绘制相关用例需要 Pillow，缺失时标记为跳过而非通过。
 
 ```bash
-python skills/kicad-check-pcb-component/scripts/selftest.py    # 75 项
-python skills/kicad-check-sch-component/scripts/selftest.py    # 24 项
-python skills/kicad-create-lib-part/scripts/selftest.py        # 50 项
+python skills/kicad-check-pcb-component/scripts/selftest.py    # 110 项
+python skills/kicad-check-sch-component/scripts/selftest.py    #  41 项
+python skills/kicad-create-lib-part/scripts/selftest.py        #  87 项
 ```
 
 针对真实 KiCad 库封装的集成测试（需要 KiCad）：
@@ -264,8 +279,30 @@ python skills/kicad-create-lib-part/scripts/selftest.py        # 50 项
 python skills/kicad-check-pcb-component/scripts/build_testboards.py /tmp/tb --run --3d
 ```
 
-CI 在每次 push 时运行上述三个 selftest、pyflakes，以及 SKILL.md frontmatter 校验
-（名称须为小写连字符且与目录名一致 —— 这是 Agent Skills 标准的要求，pi 本身较宽松）。
+### 改 SKILL.md 前先跑一下 frontmatter 检查
+
+CI 卡的判据（`.github/workflows/test.yml` 的 `skill-frontmatter`）：
+
+* `name` 只能是小写字母 + 数字 + 连字符，且**必须等于目录名**；
+* **`description` ≤ 1024 字符** —— 这条容易踩：description 既给人看又给
+  模型做技能选择，很容易写长了。现在三个分别是 1012 / 859 / 1011，
+  **余量很小**，改之前先量一下：
+
+```bash
+python - <<'PY'
+import pathlib, re
+for d in sorted(pathlib.Path("skills").iterdir()):
+    f = d / "SKILL.md"
+    if not f.exists(): continue
+    fm = f.read_text(encoding="utf-8").split("---")[1]
+    n = len(re.search(r"^description:\s*(.+)$", fm, re.M).group(1))
+    print("%-28s description %4d / 1024  %s" % (d.name, n, "✗ 超了" if n > 1024 else "✓"))
+PY
+```
+
+CI 在每次 push 时运行上述三个 selftest（py3.9 / 3.12 / 3.13）、pyflakes，
+以及 SKILL.md frontmatter 校验（名称须为小写连字符且与目录名一致，
+description ≤ 1024 字符 —— 这是 Agent Skills 标准的要求，pi 本身较宽松）。
 
 ## 已知限制
 

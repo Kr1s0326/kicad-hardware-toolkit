@@ -88,11 +88,30 @@ def classify_pads(pads, tol=0.05):
         if p is not exposed:
             normal.append(p)
 
-    inner = [p for p in normal
+    # 落在散热焊盘**里面**的焊盘不算焊盘 —— 它们是 EP 上的过孔阵列或 paste
+    # 分块，不代表这是个二维阵列。docstring 一直写着 "an exposed / thermal pad
+    # does not count"，但代码只排除了 EP 本身，没排除 EP **里面**的：
+    # 于是一个带 EP 过孔的 QFN 会被判成 grid_array，接着拿去量 array_w /
+    # matrix_cols，得到一堆看着像模像样的废话（而不是报错）。
+    #
+    # 实测：官方库里 paste-only 的分块（QFN 常见）不入铜层，所以平时碰不到；
+    # 铜层无名焊盘只有 33 个，多是基准点。但过孔真在铜层里时就中招 ——
+    # `Analog_QFN-28-36-2EP` 这类一塞进去就从 peripheral 翻成 grid。
+    # 判定用"完全落在 EP 内缩 1µm 的框里"，不用面积阈值 —— 面积阈值会
+    # 把 EP 旁边的大焊盘一起误伤。
+    def _inside_ep(p):
+        return (exposed is not None
+                and abs(p[0] - exposed[0]) <= exposed[2] / 2 - 1e-6
+                and abs(p[1] - exposed[1]) <= exposed[3] / 2 - 1e-6)
+
+    buried = [p for p in normal if _inside_ep(p)]
+    live = [p for p in normal if not _inside_ep(p)]
+    inner = [p for p in live
              if x0 + 0.25 * W < p[0] < x1 - 0.25 * W
              and y0 + 0.25 * H < p[1] < y1 - 0.25 * H]
     out = {"type": "peripheral" if not inner else "grid", "exposed": None,
-           "npads_excl_exposed": len(normal)}
+           "npads_excl_exposed": len(live),
+           "n_buried": len(buried)}
     if exposed is not None:
         out["exposed"] = {"w": exposed[2], "h": exposed[3],
                           "x": exposed[0], "y": exposed[1],
@@ -100,8 +119,10 @@ def classify_pads(pads, tol=0.05):
     if out["type"] == "grid":
         return out
 
+    # 下面只拿 "live"（不含 EP 里的）算边上的几何 —— 否则那些过孔会被当成
+    # 某条边的引脚，把 lead_pitch / leads_per_side 一起带歪。
     sides = {"left": [], "right": [], "top": [], "bottom": []}
-    for p in normal:
+    for p in live:
         # nearest edge wins - a quarter-band test mis-assigns the leads that
         # sit near a corner (e.g. the top/bottom leads of a QFP)
         d = {"left": p[0] - x0, "right": x1 - p[0],

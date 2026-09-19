@@ -482,6 +482,36 @@ def test_pad_shape_and_panels():
                 dim_calls("lead_length", _w), [("v" if _tb else "h", round(_w, 6))])
 
 
+def test_ep_buried_pads():
+    """散热焊盘**里面**的焊盘不能算焊盘。
+
+    docstring 一直写着 "an exposed / thermal pad does not count"，但代码
+    只排除了 EP 本身，没排除 EP **里面**的 —— 于是带 EP 过孔的 QFN 被判成
+    grid_array，接着拿去量 array_w / matrix_cols，得到一堆看着像模像样的
+    废话（而不是报错）。失败方式是静默的，所以必须有这条用例。
+
+    平时碰不到（官方库的 paste-only 分块不入铜层），但铜层里放过孔就中招。
+    """
+    from core import geometry as GE
+    pads = qfn32_like()
+    r = GE.classify_pads(pads)
+    check_exact("buried: 纯 QFN-32 是 peripheral", r["type"], "peripheral")
+    check_exact("buried: 纯 QFN-32 的焊盘数", r["npads_excl_exposed"], 32)
+    check_exact("buried: 纯 QFN-32 没有埋进去的", r["n_buried"], 0)
+
+    vias = pads + [(20.0, 15.0, 0.3, 0.3), (19.5, 15.5, 0.3, 0.3)]
+    r2 = GE.classify_pads(vias)
+    check_exact("buried: ★ EP 里塞两个铜过孔仍是 peripheral",
+                r2["type"], "peripheral")
+    check_exact("buried: ★ 过孔不计入焊盘数", r2["npads_excl_exposed"], 32)
+    check_exact("buried: ★ 过孔被计为 buried", r2["n_buried"], 2)
+
+    # 边界：EP 外面的大焊盘不能被误伤（用面积阈值就会误伤）
+    edge = pads + [(20.0, 15.0 + 3.1 / 2 + 0.5, 0.3, 0.3)]
+    r3 = GE.classify_pads(edge)
+    check_exact("buried: EP 边上的焊盘不算 buried", r3["n_buried"], 0)
+
+
 def test_drc_pad_clearance_rule():
     """焊盘短路间距规则必须从 spec（要求侧）推出。
 
@@ -531,6 +561,7 @@ def test_drc_pad_clearance_rule():
 
 TESTS = [
     ("core: gerber parser", test_gerber_parser),
+    ("core: EP-buried pads", test_ep_buried_pads),
     ("drc: pad clearance rule", test_drc_pad_clearance_rule),
     ("core: pad classification", test_classify),
     ("core: family dispatch", test_family_dispatch),

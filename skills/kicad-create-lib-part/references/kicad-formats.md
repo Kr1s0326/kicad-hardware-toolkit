@@ -6,8 +6,12 @@
 python scripts/kicad_io.py probe
 # sym_version          20251024
 # fp_version           20260206
-# generator_version    10.0
+# kicad_cli            C:\Program Files\KiCad\10.0\bin\kicad-cli.exe
 ```
+
+（第三行是本机 kicad-cli 的实际路径，随安装位置变。`probe_formats()` 字典里
+另有 `generator_version` 键，但 `probe` 子命令**不打印它** —— 文档这里曾经写成
+会打印，别被误导。）
 
 `probe_formats()` 去读**本机官方库文件**的 `(version …)` token，不靠记忆。
 换 KiCad 版本后重跑一次就行。

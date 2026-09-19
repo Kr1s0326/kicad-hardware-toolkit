@@ -13,9 +13,16 @@
 |---|---|
 | Pin1 标记画在右上角而不是左上角 | 全 PASS（编号全对） |
 | 丝印框压在阻焊开窗上 | 全 PASS（尺寸全对） |
-| 引脚名字互相重叠成一团 | 全 PASS（间距"合规"） |
+| 四角的引脚名互相重叠成一团 | 全 PASS（间距"合规"：29 项尺寸、网表、ERC 全绿）|
 | 3D 里引脚悬空、没落到焊盘上 | 全 PASS（焊盘数字来自图纸，图纸是对的） |
-| 符号画成了 5 米高 | 全 PASS（间距满足 ≥200 mil） |
+| 测量图画的是"另外两个焊盘" | 全 PASS（数字算对了，只是标在了错的东西上） |
+
+> **反例也是例子：什么看图片看不出来。**
+> **电气类型看不出来。** 把 `MISO` 标成 `input`，渲染图和间距/栅格/本体
+> 全部正常；反过来把电源脚标成 `input`，图上也只是个普通线段。
+> 引脚**图形样式**（line / inverted / clock）确实画得出来，但那是
+> `(pin <etype> <style>)` 里的第二个 token，与电气类型无关。
+> 想靠看图验类型 = 白看。那是 ERC 的活。
 
 **这些只能看出来。** 渲染 + 目视是唯一能覆盖这类错误的手段，所以它是校验流程里
 **不可省略**的一步，不是"有空再看"。
@@ -37,30 +44,39 @@
 
 ## 3. 怎么出图
 
-全部走 `scripts/render.py`，不要手搓命令。
+全部走 `render.py`，不要手搓命令。
+
+> **路径容易写错：`render.py` 在 `<toolkit>/shared/` 下，不在任何 skill 的
+> `scripts/` 里。** 从某个 skill 的目录里跑，相对路径是 `../../shared/render.py`；
+> 下面用 `RENDER` 代表它的完整路径，以免歧义。
+>
+> （一般用不着手跑 —— `check_footprint.py` / `check_symbol.py` 自己会调它
+> 把图出到 `outdir/`。这里列出来是为了单独重画某一张时用。）
 
 ```bash
+RENDER=<toolkit>/shared/render.py
+
 # 2D：封装（丝印/铜/装配/外框）
-python scripts/render.py fp  <lib.pretty>      <outdir> --layers F.Cu,F.SilkS,F.Fab,F.CrtYd,F.Mask
+python $RENDER fp  <lib.pretty>      <outdir> --layers F.Cu,F.SilkS,F.Fab,F.CrtYd,F.Mask
 
 # 2D：符号
-python scripts/render.py sym <lib.kicad_sym>   <outdir>
+python $RENDER sym <lib.kicad_sym>   <outdir>
 
 # 2D：整张原理图
-python scripts/render.py sch <board.kicad_sch> <outdir>
+python $RENDER sch <board.kicad_sch> <outdir>
 
 # 3D：真实器件模型压焊盘（封装独有，最有价值的一张）
-python scripts/render.py pcb <board.kicad_pcb> <out.png> --side top --zoom 2.2
-python scripts/render.py pcb <board.kicad_pcb> <out_iso.png> --side top --zoom 1.8 --rotate "-35,0,25"
+python $RENDER pcb <board.kicad_pcb> <out.png> --side top --zoom 2.2
+python $RENDER pcb <board.kicad_pcb> <out_iso.png> --side top --zoom 1.8 --rotate "-35,0,25"
 
 # SVG -> PNG（单独用时）
-python scripts/render.py svg2png <in.svg> <out.png> --width 900
+python $RENDER svg2png <in.svg> <out.png> --width 900
 ```
 
 ### 路径探测
 
 ```bash
-python scripts/render.py which      # 打印找到的 kicad-cli 和 chrome
+python $RENDER which      # 打印找到的 kicad-cli 和 chrome
 ```
 找不到时用环境变量覆盖：`KICAD_CLI=...`、`CHROME=...`。
 
@@ -112,7 +128,9 @@ python scripts/render.py which      # 打印找到的 kicad-cli 和 chrome
 - [ ] 所有引脚名都完整可读？有没有互相压字、或超出本体框？
 - [ ] 本体大小是否和引脚数相称？（引脚挤在本体边缘 = 间距不够）
 - [ ] `Reference` / `Value` 是否和图元重叠？
-- [ ] 引脚**电气类型**的图元符号对不对？（开漏 / 电源 / 输入输出）
+- [ ] 引脚图形样式对么？（下划线 / 时钟、开漏等）—— **注意：电气类型
+      （input / power_in / open_collector）在图上根本画不出来**，本工具
+      也一律用 `line`。别指望看图能验类型，那是 ERC 的事。
 - [ ] 有没有多余的、不该存在的引脚？
 
 ---

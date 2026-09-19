@@ -27,7 +27,8 @@ python scripts/check_footprint.py <fp.kicad_mod> --outdir out \
 out/
 ├── EVIDENCE.md          逐项结论 + 每条的数据来源 + 必须人看的图
 ├── look_sheet.png       ★ 所有图拼一张，一眼看完
-├── board.kicad_pcb      封装内联成的最小板（后面三条通路都需要）
+├── board.kicad_pcb      封装内联成的最小板（Gerber 导出 / DRC / 3D 都要用它）
+├── board.kicad_dru      自定义短路间距规则（**由 spec 推出**，不是手写）
 ├── gerber/              F.Cu / F.Paste / F.Mask / F.SilkS / F.Fab / Edge.Cuts + Excellon
 ├── <name>_report.xlsx   尺寸测量表
 ├── drc.rpt              DRC 原始报告
@@ -110,12 +111,22 @@ scripts/
 ├── measure_component.py     ★ 只出尺寸测量表（可单独用）
 ├── drc.py                   B：DRC 包装 + 违规解析分类
 ├── fit3d.py                 C：3D 实物贴合
-├── render.py                D：kicad-cli 出 SVG -> headless chrome 出 PNG
-├── pinmap.py                E：引脚↔焊盘编号契约
 ├── selftest.py              各族黄金测试，不需要 CAD 文件
 ├── build_testboards.py      从 KiCad 官方库造真实测试板
 └── crop_spec_table.py       从图纸截图里裁出「要求:图片」列
+
+<toolkit>/shared/            ← 三个 skill 共用；**不在本 skill 的 scripts/ 下**
+├── render.py                D：kicad-cli 出 SVG -> headless chrome 出 PNG
+├── pinmap.py                E：引脚↔焊盘编号契约
+├── kitext.py                KiCad 文本渲染常数（与 make_part.py 共用）
+├── cli.py                   统一异常包装 / 退出码
+├── toolchain.py             找 kicad-cli、KiCad 安装目录
+└── render-and-look.md       看图规范（两个校验 skill 共用）
 ```
+
+> **常见踩坑：** `render.py` / `pinmap.py` 不在本 skill 的 `scripts/` 里。
+> 直接 `python scripts/render.py` 会 `No such file or directory`。
+> 从本目录用 `../../shared/render.py`。
 
 **出问题先看哪**
 
@@ -128,13 +139,13 @@ scripts/
 | Excel 版式 / 判定颜色 / 预览 | `core/report.py` |
 | 某一族的图画得不对 | 那个 `families/*.py` 的 `panel()` |
 | 板子跑不了 DRC / 3D | `core/board.py` |
-| 图出不来 / 出来是空白 | `scripts/render.py` |
+| 图出不来 / 出来是空白 | `shared/render.py` |
 | 改了代码但行为没变 | **先删 `__pycache__`**（见下） |
 
 改了任何东西之后跑：
 
 ```bash
-python scripts/selftest.py                    # 75 项，不需要 CAD
+python scripts/selftest.py                    # 110 项，不需要 CAD
 python scripts/build_testboards.py --run      # 真实 QFN/QFP/SOT-23/SOIC-8/0603 Gerber
 ```
 
@@ -176,8 +187,15 @@ python scripts/build_testboards.py --run      # 真实 QFN/QFP/SOT-23/SOIC-8/060
 * **交错（棋盘）阵列**：`MD` 数的是*网格位*（`round(array_w / 列网格) + 1`），
   斜向间距是到相邻排的最近邻距离（`eS1` 外排 / `eS2` 内排）。
   图纸本身可能自相矛盾 ~0.001 mm —— 以明确标注的值为准，并在 `note` 里写原因。
-* **QFN 散热焊盘**：图纸的 `N` 不含它，所以 N 用 `lead_count`，要含它才用 `count`。
-  落在 EP 里面（过孔阵列、paste 分块）的焊盘自动丢弃。
+* **QFN 散热焊盘**：图纸的 `N` 不含它，所以 N 用 `lead_count`，要含它才用 `count`
+  （QFN-32 实测：`count` = 33、`lead_count` = 32）。
+  **落在 EP 里面的焊盘（过孔阵列 / paste 分块）不计入焊盘数**，见
+  `classify_pads` 的 `n_buried`。
+  > 平时碰不到：官方库 QFN 的 EP 分块多是 **paste-only**（只在 F.Paste 层），
+  > 而测量只读 **F_Cu**，所以它们根本不出现。但**铜层**里放过孔就会中招 ——
+  > 修之前那种封装会被静默判成 `grid_array`，然后拿去量 `array_w` /
+  > `matrix_cols`，得到一堆看着像模像样的废话。现在按"完全落在 EP 内缩
+  > 1µm 的框里"判定（**不用面积阈值** —— 那会误伤 EP 边上的大焊盘）。
 * **数据只从 Gerber 量，绝不从封装文件读** —— 这是整件事的意义所在（能抓到导出/出图错误）。
 * **`kicad-cli` 的 DRC 即使有违规，进程返回码也可能是 0**（除了加 `--exit-code-violations`）。
   必须解析报告正文，不能只看 returncode。`drc.py` 已经处理。
@@ -213,9 +231,16 @@ python scripts/build_testboards.py --run      # 真实 QFN/QFP/SOT-23/SOIC-8/060
 ## 共享代码
 
 `toolchain.py`（找 kicad-cli/chrome）、`cli.py`（统一错误处理）、
-`render.py`、`pinmap.py`、`render-and-look.md` 都在 **`<toolkit>/shared/`**，只有一份。skill 通过 `../../shared/` 引用（脚本里由 `SHARED` 常量解析）。
+`render.py`、`pinmap.py`、`kitext.py`、`render-and-look.md` 都在
+**`<toolkit>/shared/`**，只有一份。skill 通过 `../../shared/` 引用
+（脚本里由 `SHARED` 常量解析）。
 
 **改一处就够，不存在漂移。**
+
+> `kitext.py` 装的是 KiCad 文本渲染常数（字符宽 / 名字离边距离 / 竖排半宽）。
+> 生成侧 `make_part.py` 用它算本体得多宽，校验侧 `symbol_lint.py` 用它反推
+> 两截文字会不会撞。**两边必须同组** —— 各写一份的话，生成侧按一套值留了空间、
+> 校验侧按另一套值判断，明明压着字却报"无疑问項"。
 
 ## 本地验证时的一个坑：`__pycache__`
 
