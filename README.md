@@ -2,19 +2,36 @@
 
 从数据手册生成 KiCad 元件（原理图符号 + PCB 封装），并对产物做独立校验。
 
-```
-part_spec.json ──> kicad-create-lib-part ──┬──> LIB.kicad_sym
-   ▲                                       ├──> LIB.pretty/FP.kicad_mod
-   │                                       ├──> LIB.groups.json      ─┐
- 数据手册                                   └──> LIB.fp.spec.json    ─┤
-                                                                    │
-                          LIB.kicad_sym   ──> kicad-check-sch-component
-                          LIB.kicad_mod   ──> kicad-check-pcb-component
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 420}}}%%
+flowchart TD
+    DS["① 数据手册 PDF<br/>引脚表 · 封装图"]
+    SPEC["② part_spec.json<br/>唯一真源"]
+    GEN["③ kicad-create-lib-part"]
+    ART["④ 产物<br/>符号 .kicad_sym<br/>封装 .kicad_mod<br/>groups.json · fp.spec.json"]
+    CHK["⑤ 独立校验<br/>kicad-check-sch-component<br/>kicad-check-pcb-component"]
+    REP["⑥ 证据<br/>xlsx · EVIDENCE.md<br/>look_sheet.png<br/>3D 贴合图"]
+
+    DS -->|人工录入| SPEC
+    SPEC --> GEN
+    GEN --> ART
+    ART --> CHK
+    CHK --> REP
+    DS -.->|校验时独立回看手册| CHK
+
+    classDef gen fill:#fff2e2,stroke:#e8590c,stroke-width:2px
+    classDef chk fill:#e7f0ff,stroke:#3b5bdb,stroke-width:2px
+    classDef rep fill:#eaf7ee,stroke:#2f9e44,stroke-width:2px
+    class GEN gen
+    class CHK chk
+    class REP rep
 ```
 
-量测值与比对结果不取自生成器写出的文本：封装量 Gerber，符号的引脚名与电气类型
-取自网表与 ERC。但两个校验器都会读 `.kicad_mod` / `.kicad_sym` —— 前者用于内联成
-测试板，后者用于搭建原理图；读进来的内容不参与取值。
+图中虚线是关键：**校验不读生成器写出的文本，而是独立回看手册** ——
+封装量 Gerber，符号的引脚名与电气类型取网表与 ERC。
+
+两个校验器都会读 `.kicad_mod` / `.kicad_sym` —— 前者用于内联成测试板，
+后者用于搭建原理图；但读进来的内容不参与取值。
 
 ## 组件
 
