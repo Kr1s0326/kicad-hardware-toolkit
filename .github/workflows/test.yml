@@ -20,8 +20,13 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      # 三个 selftest 都是纯标准库 —— 不装任何第三方包也能跑。
-      # 这是刻意的：CI 不该因为 pip 网络抖动而红。
+      # 量测用例不需要任何第三方包，但"画图不能崩"那部分需要 Pillow。
+      # 装上它是为了让画图路径**真的被覆盖**；即使 pip 挂了，
+      # selftest 也会把这部分标成"跳过"而不是假装通过（see SKIPPED）。
+      - name: 装 Pillow（只为了覆盖画图路径）
+        run: pip install --quiet Pillow
+        continue-on-error: true
+
       - name: PCB footprint check — selftest
         run: python skills/kicad-check-pcb-component/scripts/selftest.py
 

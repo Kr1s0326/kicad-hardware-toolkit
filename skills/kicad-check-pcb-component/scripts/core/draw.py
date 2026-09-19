@@ -5,13 +5,56 @@
 Package agnostic: grey pad shapes, a body rectangle, datum lines, red
 dimension lines with white-backed labels, dashed helpers.  A family module
 composes these into one measurement picture per spec row.
-"""
 
-from PIL import Image, ImageDraw, ImageFont
+PIL 是**惰性导入**的：量测逻辑（families/* 的 measure()）不应该因为没装
+画图库就跑不起来。只有真要画图（panel/new_panel/font/...）时才 import PIL，
+那时缺了才报错。
+
+为什么这么做：selftest 只重量测、不画图，所以它能跑在**零第三方依赖**的
+环境里（CI 不必装 Pillow）；而画图路径缺包时报的错也足够清楚。
+"""
 
 __all__ = ["font", "View", "new_panel", "put_label", "dim_h", "dim_v",
            "dim_diag", "draw_pads", "dashed", "rect_pads", "PANEL", "RED",
-           "BLUE", "GREY", "PAD_FILL"]
+           "BLUE", "GREY", "PAD_FILL", "_pil"]
+
+_PIL = None
+
+
+def _pil():
+    """按需导入 PIL；缺包时给一句能照看做的话"""
+    global _PIL
+    if _PIL is None:
+        try:
+            from PIL import Image, ImageDraw, ImageFont      # noqa: F401
+            _PIL = (Image, ImageDraw, ImageFont)
+        except ImportError as e:
+            raise ImportError(
+                "画图需要 Pillow，但它没装。\n"
+                "  pip install Pillow\n"
+                "（只跑量测/不画图的话用不到它）") from e
+    return _PIL
+
+
+class _PILProxy:
+    """让 `D.Image.new(...)` / `D.ImageDraw.Draw(...)` 这种写法不用改"""
+    def __getattr__(self, name):
+        return getattr(_pil()[0], name)
+
+
+class _DrawProxy:
+    def __getattr__(self, name):
+        return getattr(_pil()[1], name)
+
+
+class _FontProxy:
+    def __getattr__(self, name):
+        return getattr(_pil()[2], name)
+
+
+Image = _PILProxy()
+ImageDraw = _DrawProxy()
+ImageFont = _FontProxy()
 
 RED = (210, 30, 30)
 BLUE = (60, 90, 220)

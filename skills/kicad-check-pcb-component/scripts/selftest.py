@@ -28,6 +28,33 @@ from core import gerber as G                                      # noqa: E402
 from core import geometry                                         # noqa: E402
 
 RESULTS = []
+SKIPPED = []
+
+
+def have_pil():
+    """Pillow 只在画图时用得到；量测逻辑不需要它。
+
+    没有 Pillow 时，量测用例照常跑（那才是这个文件的主要价值），
+    画图用例记为"跳过"并明确打印 —— 而不是假装通过，也不是直接失败。
+    """
+    try:
+        import PIL                                        # noqa: F401
+        return PIL is not None
+    except ImportError:
+        return False
+
+
+PIL = have_pil()
+
+
+def panels(fam, ctx, items):
+    """跑一遍 panel() 确保画图不崩；没装 Pillow 就跳过"""
+    if not PIL:
+        SKIPPED.append("panels (需要 Pillow)")
+        return
+    for k, r in items:
+        v, ex = fam.measure(k, ctx, r)
+        fam.panel(k, ctx, r, v, ex, k)
 
 
 # ---------------------------------------------------------------------------
@@ -151,11 +178,9 @@ def test_grid_array():
     check("grid_array/wlcsp: body_w", m("body_w"), 2.8819, 1e-4)
     check("grid_array/wlcsp: body_h", m("body_h"), 3.1024, 1e-4)
     # panels must not crash
-    for k, r in (("array_w", {}), ("count", {}), ("pitch", {}),
-                 ("row_span", {"from": "E", "to": "G"}), ("sd", {}), ("se", {}),
-                 ("matrix_cols", {}), ("dia", {}), ("na", {})):
-        v, ex = fam.measure(k, ctx, r)
-        fam.panel(k, ctx, r, v, ex, k)
+    panels(fam, ctx, [("array_w", {}), ("count", {}), ("pitch", {}),
+                      ("row_span", {"from": "E", "to": "G"}), ("sd", {}),
+                      ("se", {}), ("matrix_cols", {}), ("dia", {}), ("na", {})])
     return True
 
 
@@ -178,11 +203,10 @@ def test_peripheral_qfn():
     check("peripheral/qfn-32: ep_x D2", m("ep_x"), 3.100, 1e-4)
     check("peripheral/qfn-32: ep_y E2", m("ep_y"), 3.100, 1e-4)
     check("peripheral/qfn-32: body_w", m("body_w"), 7.200, 1e-4)
-    for k in ("lead_pitch", "lead_count", "leads_per_side", "pad_span_x",
-              "pad_edge_span_x", "lead_width", "lead_length", "ep_x", "ep_y",
-              "count", "side_count"):
-        v, ex = fam.measure(k, ctx, {})
-        fam.panel(k, ctx, {}, v, ex, k)
+    panels(fam, ctx, [(k, {}) for k in (
+        "lead_pitch", "lead_count", "leads_per_side", "side_count", "pad_span_x",
+        "pad_span_y", "pad_edge_span_x", "pad_edge_span_y", "lead_width",
+        "lead_length", "ep_x", "ep_y", "count", "side_count")])
     return True
 
 
@@ -216,9 +240,8 @@ def test_peripheral_sot23():
     check("peripheral/sot23: pad_span_x", m("pad_span_x"), 2.200, 1e-4)
     check("peripheral/sot23: lead_width b", m("lead_width"), 0.800, 1e-4)
     check("peripheral/sot23: lead_length L", m("lead_length"), 0.900, 1e-4)
-    for k in ("lead_pitch", "lead_width", "lead_length", "pad_span_x", "count"):
-        v, ex = fam.measure(k, ctx, {})
-        fam.panel(k, ctx, {}, v, ex, k)
+    panels(fam, ctx, [(k, {}) for k in
+                      ("lead_pitch", "lead_width", "lead_length", "pad_span_x", "count")])
     return True
 
 
@@ -251,9 +274,8 @@ def test_chip_0603():
     check("chip/0603: body_w (X)", m("body_w"), 2.000, 1e-4)
     check("chip/0603: body_long L", m("body_long"), 2.000, 1e-4)
     check("chip/0603: body_short W", m("body_short"), 1.300, 1e-4)
-    for k in ("pad_span", "pad_gap", "pad_w", "pad_l", "count", "pad_edge_span"):
-        v, ex = fam.measure(k, ctx, {})
-        fam.panel(k, ctx, {}, v, ex, k)
+    panels(fam, ctx, [(k, {}) for k in
+                      ("pad_span", "pad_gap", "pad_w", "pad_l", "count", "pad_edge_span")])
     return True
 
 
@@ -362,6 +384,9 @@ def main():
                 print("        %-42s measured %s  want %s" % (what, got, want))
     total = len(RESULTS)
     nbad = len([r for r in RESULTS if not r[0]])
+    if SKIPPED:
+        print("\n跳过: %s   （没装 Pillow —— 量测用例不受影响，"
+              "画图路径未验证）" % ", ".join(sorted(set(SKIPPED))))
     print("\n%d checks, %d failed, %d test group(s) failed"
           % (total, nbad, failed))
     return 1 if (failed or nbad) else 0

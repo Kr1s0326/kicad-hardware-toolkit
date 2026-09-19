@@ -165,7 +165,8 @@ kicad-hardware-toolkit/
 
 ## 自测
 
-三个 selftest 都是**纯标准库、不需要 CAD、秒级**：
+三个 selftest 都**不需要 CAD、秒级**；量测用例纯标准库，
+只有"画图不能崩"那部分要 Pillow（没装就标成跳过，不假装通过）：
 
 ```bash
 python skills/kicad-check-pcb-component/scripts/selftest.py    # 75 项
