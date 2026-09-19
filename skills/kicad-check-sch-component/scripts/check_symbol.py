@@ -73,7 +73,10 @@ def main():
     ap.add_argument("lib")
     ap.add_argument("--outdir", required=True)
     ap.add_argument("--symbol")
-    ap.add_argument("--pdf")
+    ap.add_argument("--pdf", help="数据手册 PDF（自动抽引脚表）")
+    ap.add_argument("--pins-json", dest="pins_json",
+                    help="人工录入的要求表 {\"1\": {\"name\":..,\"etype\":..}, ...}；"
+                         "与 --pdf 二选一，用于 pdf_pins 认不了的排版/语言")
     ap.add_argument("--pdf-table", default="Table 5-1")
     ap.add_argument("--groups")
     # 默认 None：优先用命令行显式给的值，其次用 groups.json 里的 _style，
@@ -166,12 +169,28 @@ def main():
     ev("ERC", "PASS" if not odd else "NG", "kicad-cli sch erc",
        "%d 项需注意(已扣掉孤立符号必然项)" % len(odd))
 
-    # ------------------------------------------------------- PDF 三方比对
+    # ------------------------------------------- 要求表（手册）三方比对
+    # “要求”一列的来源有两个，互斥：
+    #   --pdf        pdf_pins.py 自动从手册 PDF 抽（仅限它能认的排版/语言）
+    #   --pins-json  人工录好的引脚表（手册是中文/其他版式时用这个）
+    # 后者是必要的退路：pdf_pins 的 ROW 正则只认 TI 那套英文类型词，
+    # 碰到 Espressif 的 模拟/电源/IO 就抽不出任何东西（实测算过）。
     pdf_pins = {}
-    if a.pdf:
-        step(4, "与数据手册三方比对  (PDF <-> 网表 <-> ERC)")
-        import pdf_pins as pp
-        pdf_pins = pp.extract(os.path.abspath(a.pdf), a.pdf_table)["pins"]
+    if a.pdf or a.pins_json:
+        if a.pins_json:
+            step(4, "与手册三方比对  (手工录入的要求表 <-> 网表 <-> ERC)")
+            raw = json.load(open(a.pins_json, encoding="utf-8"))
+            src = os.path.basename(a.pins_json)
+            for k, v in raw.items():
+                pdf_pins[str(k)] = v if isinstance(v, dict) else {
+                    "name": v[0] if isinstance(v, (list, tuple)) else str(v),
+                    "etype": v[1] if isinstance(v, (list, tuple)) and len(v) > 1 else "-"}
+            print("  要求表: %s（%d 个引脚，人工录入）" % (src, len(pdf_pins)))
+        else:
+            step(4, "与数据手册三方比对  (PDF <-> 网表 <-> ERC)")
+            import pdf_pins as pp
+            pdf_pins = pp.extract(os.path.abspath(a.pdf), a.pdf_table)["pins"]
+            src = os.path.basename(a.pdf) + " / " + a.pdf_table
         nums = sorted(set(list(pdf_pins) + list(nl["pins"])),
                       key=lambda s: (len(s), s))
         bad = 0
@@ -205,7 +224,7 @@ def main():
             cmp_rows, os.path.join(out, r["symbol"] + "_pins.xlsx"),
             title=r["symbol"],
             notes=[
-                "要求列（手册名 / 手册类型）：pdf_pins.py 从数据手册 " + a.pdf_table + " 抽取。",
+                "要求列（手册名 / 手册类型）：来自 " + src + "。",
                 "实测列（网表名 / ERC类型）：kicad-cli sch export netlist 与 sch erc 的输出。",
                 "两列都不取自 .kicad_sym 的文本，所以能抓到「文本看着对、KiCad 读出来不对」的错。",
                 "任一侧缺这个引脚即判 NG（少引脚与多引脚都是真错）。",

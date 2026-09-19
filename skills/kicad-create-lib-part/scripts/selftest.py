@@ -371,6 +371,46 @@ def test_grid_warning(tmp):
     check("grid_warn", "200/400 mil -> 不报", not r2["warnings"], str(r2["warnings"]))
 
 
+def test_quad_body_and_fields(tmp):
+    """四边封装的三个坑，都是拿真实 56 脚 QFN 跑才暴露的。
+
+    ① 本体宽度没算上顶/底引脚的横向铺开 -> 引脚悬在本体外 17.8mm
+    ② 位号/Value 只放在本体上沿之上，没避开上排引脚 -> 文字压在引脚上
+    ③ 外框也得跟着变大（由 ① 推导，顺带验）
+    """
+    r = gen(qfp_spec(), os.path.join(tmp, "qb"))
+    st = read(r["sym"])
+
+    pins = pins_of_sym(st)                      # {num: (x, y, rot)}
+    # 引脚长度从生成的符号里读，不要写死（qfp_spec 用的是 100 mil）
+    _lens = {float(m) for m in re.findall(r'\(length ([\d.]+)\)', st)}
+    ln = _lens.pop() if len(_lens) == 1 else 2.54
+    b = re.search(r'\(rectangle\s*\(start (-?[\d.]+) (-?[\d.]+)\)\s*'
+                  r'\(end (-?[\d.]+) (-?[\d.]+)\)', st)
+    x0, ya, x1, yb = (float(g) for g in b.groups())
+    bx0, bx1, by1, by0 = min(x0, x1), max(x0, x1), max(ya, yb), min(ya, yb)
+
+    # 引脚根部必须落进本体（两个轴都要查）
+    outside = []
+    for num, (x, y, rot) in pins.items():
+        rx = x + (ln if rot == 0 else (-ln if rot == 180 else 0))
+        ry = y + (ln if rot == 90 else (-ln if rot == 270 else 0))
+        if not (bx0 - 0.02 <= rx <= bx1 + 0.02 and by0 - 0.02 <= ry <= by1 + 0.02):
+            outside.append((num, rx, ry))
+    check("quad_body", "① 所有引脚根部都在本体内",
+          not outside, "跑到外面: %s  本体 x[%.2f,%.2f] y[%.2f,%.2f]"
+          % (outside[:4], bx0, bx1, by0, by1))
+
+    # ② 位号 / Value 必须避开引脚带
+    ys = [v[1] for v in pins.values()]
+    for key in ("Reference", "Value"):
+        m = re.search(r'\(property "%s" "[^"]*"\s*\(at (-?[\d.]+) (-?[\d.]+)' % key, st)
+        vy = float(m.group(2))
+        ok = vy > max(ys) or vy < min(ys)
+        check("quad_body", "② %s 避开引脚带 (y=%.2f, 引脚 %.2f..%.2f)"
+              % (key, vy, min(ys), max(ys)), ok)
+
+
 def test_idempotent(tmp):
     a = gen(vssop_spec(), os.path.join(tmp, "i1"))
     b = gen(vssop_spec(), os.path.join(tmp, "i2"))
@@ -383,7 +423,7 @@ def main():
     pat = sys.argv[1] if len(sys.argv) > 1 else ""
     tmp = tempfile.mkdtemp(prefix="mkpart_selftest_")
     for fn in (test_pads, test_silk_courtyard, test_symbol_layout, test_quad,
-               test_grid_warning, test_idempotent):
+               test_quad_body_and_fields, test_grid_warning, test_idempotent):
         if pat and pat not in fn.__name__:
             continue
         try:

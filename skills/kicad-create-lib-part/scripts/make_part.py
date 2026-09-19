@@ -110,6 +110,18 @@ def layout_symbol(spec):
     spans = {s: span(q) for s, q in seqs.items()}
     y_top = max(spans.values()) / 2.0 if align == "top" and spans else None
 
+    # 上/下边的引脚是沿 x 铺开的，本体宽度必须容得下它们。
+    # 踩过的坑：以前直接用 body_half_width_mil 定宽，56 脚的 QFN 上
+    # 顶/底各 14 脚铺开 ±33mm，而本体只有 ±7.62mm —— 引脚悬在本体外 17.8mm，
+    # 而当时 symbol_lint 的 body_margin 只查 y 不查 x，一声不响。
+    def tb_span(side):
+        n = len([p for p in pins if p.get("side") == side])
+        return 0.0 if n <= 1 else (n - 1) * pitch
+
+    tb_need = max(tb_span("top"), tb_span("bottom")) / 2.0
+    if tb_need:
+        hw = max(hw, tb_need + topm)
+
     placed, groups_out = [], {}
     for side in ("left", "right"):
         seq = seqs[side]
@@ -163,11 +175,18 @@ def emit_symbol(spec, lay, sym_version):
                  % (k, v, kio.num(x), kio.num(y),
                     ('\t\t\t(hide yes)\n' if hide else "")))
 
-    prop("Reference", spec.get("reference", "U"), bx0, by1 + font * 1.0)
-    prop("Value", name, bx1 * 0.5, by1 + font * 1.0)
+    # 位号 / Value 要避开引脚，而不只是避开本体。
+    # 踩过的坑：原来写在 by1 + font（本体上沿之上 1.27mm），双排封装没上/下引脚
+    # 所以没事；四边封装的上排引脚恰好占着那段（本体沿 35.56 → 引脚末 38.1），
+    # 于是 ESP32-S3 的 Value 文字和 52/53 号引脚名叠在一起。
+    _ys = [p["y"] for p in lay["pins"]] or [0.0]
+    top = max(by1, max(_ys)) + font
+    bot = min(by0, min(_ys)) - font
+    prop("Reference", spec.get("reference", "U"), bx0, top)
+    prop("Value", name, bx1, bot)
     prop("Footprint", "%s:%s" % (spec["library"], spec["footprint"]),
-         bx0, by0 - font * 1.0, hide=True)
-    prop("Datasheet", spec.get("datasheet", ""), bx0, by0 - font * 2.0, hide=True)
+         bx0, bot - font, hide=True)
+    prop("Datasheet", spec.get("datasheet", ""), bx0, bot - font * 2.0, hide=True)
     prop("Description", spec.get("description", ""), 0, 0, hide=True)
     prop("ki_keywords", spec.get("keywords", ""), 0, 0, hide=True)
     prop("ki_fp_filters", spec.get("fp_filters", "*"), 0, 0, hide=True)
@@ -235,6 +254,40 @@ def layout_pads(pkg):
         for x in reversed(xs):
             pads.append((str(num), x, -ry, ph, pw)); num += 1
     return pads
+
+
+def ep_geometry(pkg):
+    """散热焊盘（QFN/QFP 的 EPAD）的几何。-> dict 或 None。
+
+    为什么单独一个函数：EP 不在任何一条边上，也不是 roundrect 普通焊盘 ——
+    它需要：
+      * 铜箔矩形焊盘，带 pad_prop_heatsink + zone_connect 2（KiCad 惯例）
+      * **不带 F.Paste**：钢网改用分块，否则整片开窗会让芯片浮起/空洞
+      * n×m 块仅 F.Paste 的贴片，按 EP 尺寸分格推导
+
+    分块尺寸的取法在 KiCad 官方 QFN-56 (4mm EP) 上校准过：
+        pitch = size / n        ->  4/3 = 1.3333
+        patch = pitch * 0.8     ->  1.0667  （官方写 1.07）
+    即覆盖率 9*1.067^2/16 = 0.64，与官方一致。
+    """
+    ep = pkg.get("ep")
+    if not ep:
+        return None
+    sx, sy = float(ep["size_x"]), float(ep["size_y"])
+    out = {"number": str(ep.get("number", "57")), "x": 0.0, "y": 0.0,
+           "w": sx, "h": sy, "patches": []}
+    g = ep.get("paste")
+    if g:
+        nx, ny = int(g.get("n", 3)), int(g.get("m", g.get("n", 3)))
+        ratio = float(g.get("patch_ratio", 0.8))
+        pw, ph = sx / nx * ratio, sy / ny * ratio
+        px, py = sx / nx, sy / ny
+        for i in range(nx):
+            for j in range(ny):
+                out["patches"].append((round((i - (nx - 1) / 2.0) * px, 4),
+                                       round((j - (ny - 1) / 2.0) * py, 4),
+                                       round(pw, 4), round(ph, 4)))
+    return out
 
 
 def _clip(line, blocked):
@@ -375,6 +428,19 @@ def emit_footprint(spec, pads, fp_version, gen_version):
                  % (num, kio.num(x), kio.num(y), kio.num(w), kio.num(h),
                     kio.num(rratio)))
 
+    # 散热焊盘：铜箔矩形，**不带 F.Paste**；钢网另外分块
+    ep = ep_geometry(pkg)
+    if ep:
+        S.append('\t(pad "%s" smd rect\n\t\t(at %s %s)\n\t\t(size %s %s)\n'
+                 '\t\t(property pad_prop_heatsink)\n'
+                 '\t\t(layers "F.Cu" "F.Mask")\n\t\t(zone_connect 2)\n\t)\n'
+                 % (ep["number"], kio.num(ep["x"]), kio.num(ep["y"]),
+                    kio.num(ep["w"]), kio.num(ep["h"])))
+        for px, py, pw, ph in ep["patches"]:
+            S.append('\t(pad "" smd roundrect\n\t\t(at %s %s)\n\t\t(size %s %s)\n'
+                     '\t\t(layers "F.Paste")\n\t\t(roundrect_rratio 0.233645)\n\t)\n'
+                     % (kio.num(px), kio.num(py), kio.num(pw), kio.num(ph)))
+
     model = pkg.get("model")
     # 把 ${KICAD10_3DMODEL_DIR} 里的版本号换成**本机实际装的** KiCad 主版本，
     # 否则生成的封装拿到别的 KiCad 版本上 3D 显示不出来。
@@ -449,6 +515,14 @@ def emit_fp_spec(spec, pads):
         rows.append({"symbol": "列中心距",
                      "requirement": "%s" % pkg["row_span_x"], "kind": "pad_span_x",
                      "nominal": pkg["row_span_x"]})
+    ep = pkg.get("ep")
+    if ep:                              # 散热焊盘也要进尺寸表
+        rows.append({"symbol": "D2", "requirement": "%s" % ep["size_x"],
+                     "kind": "ep_x", "nominal": float(ep["size_x"]),
+                     "note": "散热焊盘宽（None 焊盘）"})
+        rows.append({"symbol": "E2", "requirement": "%s" % ep["size_y"],
+                     "kind": "ep_y", "nominal": float(ep["size_y"]),
+                     "note": "散热焊盘高（None 焊盘）"})
     return {"title": "%s 封装尺寸测量表" % spec["symbol"],
             "component": spec.get("description", spec["symbol"]),
             "family": "peripheral", "output": "%s_report.xlsx" % spec["symbol"],
@@ -531,7 +605,12 @@ def main():
         g = r["layout"]["groups"].get(side)
         if g:
             print("  %-6s 分组: %s" % (side, [" ".join(x) for x in g]))
-    print("焊盘    : %d" % len(r["pads"]))
+    _ep = ep_geometry(r["spec"]["package"])
+    print("焊盘    : %d%s" % (len(r["pads"]),
+                             " + 散热焊盘 %s" % _ep["number"] if _ep else ""))
+    if _ep and _ep["patches"]:
+        print("          散热焊盘 %.2fx%.2f, 钢网 %d 块"
+              % (_ep["w"], _ep["h"], len(_ep["patches"])))
     for w in r["warnings"]:
         print("  [warn] %s" % w)
 

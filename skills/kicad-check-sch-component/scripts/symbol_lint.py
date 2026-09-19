@@ -51,6 +51,7 @@ SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
 if SHARED not in sys.path:
     sys.path.insert(0, SHARED)
 from cli import guard                             # noqa: E402
+from pinmap import iter_pins                      # noqa: E402
 
 try:
     sys.stdout.reconfigure(errors="replace")
@@ -83,15 +84,11 @@ def parse_symbol(sym_path, sym_name=None):
         body = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
     pins = []
-    for pm in re.finditer(
-            r'\(pin (\w+) \w+\s*\n\s*\(at (-?[\d.]+) (-?[\d.]+) (\d+)\)\s*\n'
-            r'\s*\(length ([\d.]+)\)\s*\n\s*\(name "([^"]+)"[\s\S]*?'
-            r'\(number "([^"]+)"', blk):
-        etype, x, y, rot, ln, name, num = pm.groups()
-        pins.append({"etype": etype, "x": float(x), "y": float(y),
-                     "rot": int(rot), "length": float(ln),
-                     "name": name.replace("~{", "").replace("}", ""),
-                     "raw_name": name, "number": num})
+    # 用共用解析器（shared/pinmap.py:iter_pins）。
+    # 以前这里也写了一条"按顺序串联 at/length/name/number"的长正则，
+    # 遇到带 (hide yes) 的引脚（重复电源脚常见）会整条失配并**静默丢引脚**。
+    # 实测 KiCad 官方 ESP32-S3 因此从 57 个少成 55 个。
+    pins = [dict(p) for p in iter_pins(blk)]
 
     # 位号 / Value 属性位置
     fields = {}
@@ -180,13 +177,29 @@ def lint(sym_path, sym_name=None, min_pitch_mil=200.0, group_gap_mil=400.0,
         desc = side in ("left", "right")          # 左/右按 y 从大到小（上->下）
         grp.sort(key=lambda p: -p[axis] if desc else p[axis])
         pos = [p[axis] for p in grp]
-        gaps = [round(abs(b - a), 4) for a, b in zip(pos, pos[1:])]
+        raw = [round(abs(b - a), 4) for a, b in zip(pos, pos[1:])]
+        if not raw:
+            continue                      # 该侧只有 1 个引脚，无间距可言
+        # 堆叠引脚：同一侧、同一坐标的多个引脚。重复电源脚常这么画
+        # （KiCad 官方 ESP32-S3 把 2/3 堆在 (-2.54,38.1)、55/56 堆在 (-5.08,38.1)）。
+        # 间隙为 0 会让 base = 0，随后 g/base 直接除零崩溃。
+        stacked = [g for g in raw if g < 1e-6]
+        gaps = [g for g in raw if g >= 1e-6]
+        if stacked:
+            warns.append(("stacked",
+                          "%s 边有 %d 对引脚同位（堆叠）：%s —— "
+                          "间距统计跳过这 %d 个 0 间隙"
+                          % (side, len(stacked),
+                             ", ".join("%s/%s" % (grp[i]["number"], grp[i + 1]["number"])
+                                       for i, g in enumerate(raw) if g < 1e-6),
+                             len(stacked))))
         if not gaps:
-            continue
+            continue                      # 整侧引脚全同位，量不出基础间距
         base = min(gaps)
         groups[side] = {"base_pitch_mm": base, "base_pitch_mil": base / MIL,
                         "pins": [(p["number"], p["name"], p[axis]) for p in grp],
-                        "gaps_mil": [g / MIL for g in gaps]}
+                        "gaps_mil": [g / MIL for g in gaps],
+                        "stacked": len(stacked)}
         if base < min_pitch - 1e-6:
             issues.append(("pitch", "%s 边基础间距 %.1f mil < 规定 %.0f mil"
                            % (side, base / MIL, min_pitch_mil)))
@@ -259,6 +272,10 @@ def lint(sym_path, sym_name=None, min_pitch_mil=200.0, group_gap_mil=400.0,
         tol = 0.02
         # 引脚靠本体那一端必须落在本体边界上或内部。
         # 注意：引脚根部**贴在本体边缘**才是对的，所以不能用"留余量"去查。
+        # 而且要查**两个轴**：左/右引脚贴的是 x 边，但它们沿 y 排开，
+        # 可能超出本体上下端；上/下引脚同理。
+        # 踩过的坑：以前只查了贴着的那一个轴，于是一个 15.24mm 宽的本体上
+        # 摆着 ±33mm 的顶边引脚（悬在空中 17.8mm）竟然全部 PASS。
         for p in pins:
             rx, ry = root_of(p)
             s = side_of(p)
@@ -267,11 +284,19 @@ def lint(sym_path, sym_name=None, min_pitch_mil=200.0, group_gap_mil=400.0,
                     issues.append(("body_margin",
                                    "引脚 %s 根部 x=%.2f 没接到本体 (%.2f..%.2f)"
                                    % (p["number"], rx, bx0, bx1)))
+                if not (by0 - tol <= ry <= by1 + tol):
+                    issues.append(("body_margin",
+                                   "引脚 %s 超出本体上下范围: y=%.2f 不在 (%.2f..%.2f)"
+                                   % (p["number"], ry, by0, by1)))
             elif s in ("top", "bottom"):
                 if not (by0 - tol <= ry <= by1 + tol):
                     issues.append(("body_margin",
                                    "引脚 %s 根部 y=%.2f 没接到本体 (%.2f..%.2f)"
                                    % (p["number"], ry, by0, by1)))
+                if not (bx0 - tol <= rx <= bx1 + tol):
+                    issues.append(("body_margin",
+                                   "引脚 %s 超出本体左右范围: x=%.2f 不在 (%.2f..%.2f)"
+                                   % (p["number"], rx, bx0, bx1)))
         # 引脚离本体角落太近：只是提醒（手工画的符号常有）
         m = 50.0 * MIL          # 50 mil
         for side, grp in (("left", [p for p in pins if side_of(p) == "left"]),
@@ -282,7 +307,7 @@ def lint(sym_path, sym_name=None, min_pitch_mil=200.0, group_gap_mil=400.0,
                     warns.append(("body_margin",
                                   "%s 边最边上的引脚离本体上/下边缘只有 %.2f mm"
                                   % (side, min(min(ys) - by0, by1 - max(ys)))))
-        # --- 名字溢出：同一行左右两个名字会不会撞上
+        # --- 名字溢出（一）：同一行左右两个名字会不会撞上
         bw = bx1 - bx0
         rows = {}
         for p in pins:
@@ -298,6 +323,40 @@ def lint(sym_path, sym_name=None, min_pitch_mil=200.0, group_gap_mil=400.0,
                               % (y,
                                  r.get("left", {}).get("name", "-"),
                                  r.get("right", {}).get("name", "-"), need, bw)))
+
+        # --- 名字溢出（二）：角落交叉
+        # 四边封装里，上/下引脚的名字是**竖着**往本体内伸的，左/右引脚的名字是
+        # **横着**伸的；两者的条带会在四个角相交。
+        # 以前只查了"同一行左+右"，所以一个 76×71mm 的 56 脚 QFN 符号里
+        # 四个角的文字全部叠在一起却一声不响。
+        # 名字实际不会伸过本体中心，所以按半个本体长度截断，避免假警报。
+        def text_len(p):
+            return len(p["name"]) * font * 0.85
+
+        tb = [p for p in pins if side_of(p) in ("top", "bottom")]
+        lr = [p for p in pins if side_of(p) in ("left", "right")]
+        f2 = font * 0.5
+        hits = []
+        for a in tb:
+            ax = a["x"]
+            ax0, ax1 = ax - f2, ax + f2
+            ay0 = (by1 - text_len(a)) if side_of(a) == "top" else by0
+            ay1 = by1 if side_of(a) == "top" else (by0 + text_len(a))
+            for b in lr:
+                byy = b["y"]
+                by0_, by1_ = byy - f2, byy + f2
+                bx0_ = bx0 if side_of(b) == "left" else (bx1 - text_len(b))
+                bx1_ = (bx0 + text_len(b)) if side_of(b) == "left" else bx1
+                if (ax0 < bx1_ and ax1 > bx0_ and ay0 < by1_ and ay1 > by0_):
+                    hits.append("%s(%s) × %s(%s)"
+                                % (a["number"], a["name"], b["number"], b["name"]))
+        if hits:
+            warns.append(("overflow",
+                          "角落文字交叠 %d 处（上/下引脚名与左/右引脚名）：%s%s\n"
+                          "      → 四边封装用长引脚名时常见。要么缩短名字，\n"
+                          "        要么改用左右两列的布局（本工具目前只出四边布局）"
+                          % (len(hits), ", ".join(hits[:4]),
+                             " ..." if len(hits) > 4 else "")))
 
     # --- 电源
     if not any(p["etype"] == "power_in" for p in pins):

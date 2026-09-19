@@ -21,6 +21,7 @@ selftest.py - 符号校验的黄金测试。不需要 CAD、不需要联网、�
 """
 
 import os
+import re
 import sys
 import tempfile
 import traceback
@@ -271,6 +272,64 @@ def test_pins_of(tmp):
 
 
 # ---------------------------------------------------------------------------
+def test_hidden_and_stacked(tmp):
+    """两个真实世界的坑，都会让工具**静默给出错的结果**。
+
+    ① 带 (hide yes) 的引脚：重复电源脚的常规画法。长正则按顺序串
+       at/length/name/number 会整条失配，静默丢引脚。
+       实测 KiCad 官方 ESP32-S3 因此从 57 少成 55 —— 官方符号配官方封装
+       竟然报「封装有、符号没有的焊盘: 3, 56」。
+    ② 堆叠引脚：同侧同坐标。间隙为 0 会让 base=0，随后 g/base 除零崩溃。
+    """
+    pins = [("1", "A", "input", -7.62, 2.54, 0, 2.54),
+            ("2", "VDD", "power_in", -7.62, 0.0, 0, 2.54),
+            ("3", "VDD", "passive", -7.62, 0.0, 0, 2.54),   # 与 2 同位
+            ("4", "B", "output", 7.62, 0.0, 180, 2.54)]
+    txt = make_symbol(pins)
+    # 给 pin 3 插一个 (hide yes)，位置放在 length 之后、name 之前 ——
+    # 正是会打爆“把 at/length/name/number 按顺序串起来”那种正则的地方。
+    # 用正则插入而不写死字面量（免得依赖 make_symbol 的坐标格式）。
+    txt2, n = re.subn(r'(\(pin passive line\n(?:\s*\([^\n]*\n)*?\s*\(length [\d.]+\)\n)',
+                      r'\1\t\t\t\t(hide yes)\n', txt, count=1)
+    assert n == 1, "测试自身出错：没能插入 (hide yes)"
+    txt = txt2
+    f = os.path.join(tmp, "stacked.kicad_sym")
+    open(f, "w", encoding="utf-8").write(txt)
+
+    _n, got = pins_of(f)
+    check("hidden/stacked", "① 带 (hide yes) 的引脚不被丢掉（4 个）",
+          set(got) == {"1", "2", "3", "4"}, str(sorted(got)))
+
+    r = run(f)                       # ② 不能崩
+    check("hidden/stacked", "② 堆叠引脚不导致崩溃", True)
+    check("hidden/stacked", "② 堆叠被识别并告警",
+          "stacked" in [k for k, _ in r["warnings"]],
+          str([k for k, _ in r["warnings"]]))
+    check("hidden/stacked", "② 基础间距仍能量出（2.54mm = 100 mil）",
+          abs(r["sides"]["left"]["base_pitch_mil"] - 100.0) < 0.1,
+          str(r["sides"]["left"].get("base_pitch_mil")))
+
+
+def test_body_margin_both_axes(tmp):
+    """body_margin 必须查两个轴。
+
+    踩过的坑：以前只查引脚"贴着的那一个轴"，于是本体宽 15.24mm 却排着
+    ±33mm 的顶边引脚（悬空 17.8mm）竟然全部 PASS。真实案例是 56 脚 QFN。
+    """
+    body = (-7.62, -10.16, 7.62, 10.16)
+    # 顶边引脚贴在 y=10.16 上（y 轴没问题），但 x=25.4 远在本体之外
+    pins = [("1", "A", "input", -7.62, 0.0, 0, 2.54),
+            ("2", "B", "output", 7.62, 0.0, 180, 2.54),
+            ("3", "C", "input", 25.4, 12.7, 270, 2.54)]
+    f = os.path.join(tmp, "wide_top.kicad_sym")
+    open(f, "w", encoding="utf-8").write(make_symbol(pins, body=body))
+    r = run(f)
+    msgs = [m for k, m in r["issues"] if k == "body_margin"]
+    check("body_margin", "顶边引脚 x 超出本体 -> 报出",
+          any("左右范围" in m for m in msgs), str(msgs))
+    check("body_margin", "报的是引脚 3", any("引脚 3" in m for m in msgs), str(msgs))
+
+
 def test_pin_report_verdict(tmp):
     """引脚比对表的判定：只有"两边都有 + 名字一致 + 类型一致"才算 PASS。
 
@@ -325,6 +384,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         for fn in (test_pitch_and_groups, test_groups_shape,
                    test_grid_duplicate_body, test_pins_of, test_pin_report_verdict,
+                   test_hidden_and_stacked, test_body_margin_both_axes,
                    test_multi_unit):
             if pat and pat not in fn.__name__:
                 continue

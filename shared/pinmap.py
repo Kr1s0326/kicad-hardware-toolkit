@@ -37,6 +37,51 @@ except Exception:                                       # noqa: BLE001
 
 
 # ------------------------------------------------------------------ 读取
+# 踩过的坑：不要用“一条长正则按顺序把 at/length/name/number 串起来匹配”。
+# 引脚块里 `(length)` 和 `(name)` 之间还可能出现 `(hide yes)`（重复电源脚
+# 是很常见的做法），长正则会**整条失配并静默丢掉该引脚**。
+#
+# 实测：KiCad 官方 MCU_Espressif:ESP32-S3 有 57 个引脚，其中 3 和 56 带
+# (hide yes)，长正则只拿到 55 个 —— 于是“官方符号 + 官方封装”竟然报出
+# 「封装有、符号没有的焊盘: 3, 56」，契约检查 FAIL。只有拿一个已知自洽的
+# 配对去跑，才看得出来。
+#
+# 改成按 "(pin " 切块 + 逐字段独立匹配，对中间插入任何 token 免疫。
+_RE_AT = re.compile(r'\(at (-?[\d.]+) (-?[\d.]+) (\d+)\)')
+_RE_LEN = re.compile(r'\(length ([\d.]+)\)')
+_RE_NAME = re.compile(r'\(name "([^"]*)"')
+_RE_NUM = re.compile(r'\(number "([^"]*)"')
+_RE_ETYPE = re.compile(r'^(\w+)')
+
+
+def iter_pins(block):
+    """把符号块里每个 (pin ...) 解析成 dict（按块内出现顺序）。
+
+    返回 [{'etype','x','y','rot','length','name','raw_name','number','hidden'}]。
+    字段取不到时为 None，不会因为顺序变化而整体失配。
+    """
+    out = []
+    for chunk in block.split("(pin ")[1:]:
+        m_num = _RE_NUM.search(chunk)
+        if not m_num:
+            continue
+        m_at, m_len = _RE_AT.search(chunk), _RE_LEN.search(chunk)
+        m_name, m_et = _RE_NAME.search(chunk), _RE_ETYPE.match(chunk)
+        raw = m_name.group(1) if m_name else ""
+        out.append({
+            "etype": m_et.group(1) if m_et else "?",
+            "x": float(m_at.group(1)) if m_at else None,
+            "y": float(m_at.group(2)) if m_at else None,
+            "rot": int(m_at.group(3)) if m_at else None,
+            "length": float(m_len.group(1)) if m_len else None,
+            "name": raw.replace("~{", "").replace("}", ""),
+            "raw_name": raw,
+            "number": m_num.group(1),
+            "hidden": "(hide yes)" in chunk,
+        })
+    return out
+
+
 def pads_of(mod_path):
     """-> ({number: (x, y, w, h)}, [unnumbered])"""
     txt = open(mod_path, encoding="utf-8").read()
@@ -54,7 +99,7 @@ def pads_of(mod_path):
 
 
 def pins_of(sym_path, sym_name=None):
-    """-> (resolved_name, {number: (name, None)}) for one symbol in a .kicad_sym
+    """-> (resolved_name, {number: (name, etype)}) for one symbol in a .kicad_sym
 
     一个符号在文件里是若干块的集合：
         \t(symbol "INA239"       <- 父块，只放属性
@@ -76,11 +121,8 @@ def pins_of(sym_path, sym_name=None):
     blk = txt[start:nxt.start() if nxt else len(txt)]
 
     out = {}
-    for m in re.finditer(r'\(pin \w+ \w+\s*\n\s*\(at [-\d.]+ [-\d.]+ \d+\)\s*\n'
-                         r'\s*\(length [\d.]+\)\s*\n\s*\(name "([^"]+)"[\s\S]*?'
-                         r'\(number "([^"]+)"', blk):
-        out.setdefault(m.group(2),
-                       (m.group(1).replace("~{", "").replace("}", ""), None))
+    for p in iter_pins(blk):
+        out.setdefault(p["number"], (p["name"], p["etype"]))
     return sym_name, out
 
 
