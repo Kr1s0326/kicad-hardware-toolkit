@@ -17,8 +17,11 @@ license: MIT
 
 ```bash
 python scripts/check_footprint.py <fp.kicad_mod> --outdir out \
-       [--spec a.spec.json] [--symbol lib.kicad_sym] [--name INA239]
+       --spec a.spec.json [--symbol lib.kicad_sym] [--name INA239]
 ```
+
+`--spec` 是**必填**。报告里那两列「要求」来自它，连 DRC 的焊盘间距规则
+也是从它推的 —— 缺了它只能把 Gerber 量一遍，量出来的数字没人知道对不对。
 
 产出：
 

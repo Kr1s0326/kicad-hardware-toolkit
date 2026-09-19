@@ -596,6 +596,65 @@ def test_grid_array(tmp):
           str([(x["symbol"], x.get("from"), x.get("to")) for x in rs]))
 
 
+def test_validate_rejects(tmp):
+    """值写错时必须报错，而不是**静默产出错误产物**。
+
+    实测过的三个（都是真的把产物做坏了而一声不响）：
+        side = "middle"       -> 该引脚不属于任何一边，被静默丢掉（49->48），
+                                 而工具照常打印"引脚 : 48"
+        package.col_pitch = 0 -> 49 个焊盘全叠到 x=0，工具打印"焊盘 : 49"
+        groups 写不存在的组名  -> groups.json 里那一项变 null
+    """
+    import copy
+
+    n = [0]
+
+    def bad(mut, tag):
+        n[0] += 1
+        s = copy.deepcopy(vssop_spec())
+        mut(s)
+        try:
+            gen(s, os.path.join(tmp, "v%02d" % n[0]))
+            check("validate", "★ %s 必须报错" % tag, False, "居然生成成功了")
+        except SystemExit as e:
+            check("validate", "★ %s 必须报错 (code=%s)" % (tag, e.code),
+                  e.code == 2, "code=%s（应当是 2）" % e.code)
+
+    bad(lambda s: s["pins"][0].update(side="middle"), "side 写不认识的值")
+    bad(lambda s: s["pins"][1].update(number=s["pins"][0]["number"]), "引脚号重复")
+    bad(lambda s: s["pins"][0].pop("number"), "引脚缺 number")
+    bad(lambda s: s["groups"].update(left=["nosuch"]), "groups 写不存在的组")
+    bad(lambda s: s["package"].update(pitch=0), "pitch = 0")
+    bad(lambda s: s["package"].update(row_span_x=-1), "row_span_x 为负")
+    bad(lambda s: s["package"]["body"].update(w=0), "本体宽 = 0")
+    bad(lambda s: s["symbol_style"].update(pitch_mil="abc"), "pitch_mil 写成字符串")
+    bad(lambda s: s.update(pins=[]), "pins 为空")
+
+    # 正常的不该被拦
+    r = gen(vssop_spec(), os.path.join(tmp, "v_ok"))
+    check("validate", "正常 spec 照常通过", r["sym"] is not None)
+
+
+def test_judgments(tmp):
+    """判断依据必须落到产物里 —— 否则复核的人只能把手册重读一遍重判。"""
+    spec = vssop_spec()
+    spec["judgments"] = {"etype_rules": ["测试规则 A"]}
+    spec["pins"][0]["reason"] = "测试依据 B"
+    r = gen(spec, os.path.join(tmp, "jd"))
+    check("judgments", "生成了 judgments.md", os.path.exists(r["judgments"]))
+    t = read(r["judgments"])
+    check("judgments", "规则写进去了", "测试规则 A" in t)
+    check("judgments", "逐引脚依据写进去了", "测试依据 B" in t)
+    check("judgments", "逐引脚表里有引脚号", "| 2 |" in t or "| 1 |" in t)
+
+    # 非显然的电气类型没写依据 -> 要点名，不能悄悄放过
+    spec2 = vssop_spec()
+    spec2["pins"][0]["etype"] = "passive"
+    r2 = gen(spec2, os.path.join(tmp, "jd2"))
+    check("judgments", "★ 非显然类型缺依据时点名",
+          "待补依据" in read(r2["judgments"]))
+
+
 def test_grid_rejects_garbage(tmp):
     """球名解不出来要报错，不能默默画到 (0,0) 上去。"""
     spec = wlcsp_spec()
@@ -620,8 +679,8 @@ def main():
     tmp = tempfile.mkdtemp(prefix="mkpart_selftest_")
     for fn in (test_pads, test_silk_courtyard, test_symbol_layout, test_quad,
                test_quad_body_and_fields, test_grid_warning,
-               test_house_style_pitch, test_grid_array,
-               test_grid_rejects_garbage, test_idempotent):
+               test_house_style_pitch, test_validate_rejects, test_judgments,
+               test_grid_array, test_grid_rejects_garbage, test_idempotent):
         if pat and pat not in fn.__name__:
             continue
         try:

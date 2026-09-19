@@ -13,6 +13,9 @@ python scripts/check_symbol.py <lib.kicad_sym> --outdir out \
        --footprint INA239.pretty/VSSP-10.kicad_mod
 ```
 
+`--groups` 与 `--pdf`/`--pins-json` 是**必填**：前者是「组间 400 mil」
+能被校验的前提，后者是比对的要求一侧。只想过一遍绘制规范用 `symbol_lint.py`。
+
 产出：
 
 ```

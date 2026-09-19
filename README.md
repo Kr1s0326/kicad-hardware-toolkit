@@ -148,7 +148,15 @@ python $TK/skills/kicad-check-sch-component/scripts/check_symbol.py \
 python $TK/skills/kicad-check-pcb-component/scripts/check_footprint.py \
        out/LIB.pretty/FP.kicad_mod --outdir chk_pcb \
        --spec out/LIB.fp.spec.json --symbol out/LIB/LIB.kicad_sym
+
+# 端到端回归（需要本机装了 KiCad）：一条命令跑完 生成 -> 两个校验 -> NG=0
+python $TK/e2e.py
 ```
+
+两个校验器的「要求侧」都是**必填**：封装侧要 `--spec`，符号侧要
+`--pdf` 或 `--pins-json`，另外还要 `--groups`。
+没有要求表就无从比对 —— 工具仍能把 Gerber 量准、把网表导对，但**量出来的
+数字没人知道对不对**，而汇总行与退出码看上去还是绿的。那不叫校验，叫自测。
 
 两份 Excel 检查表：
 
@@ -167,8 +175,8 @@ python $TK/skills/kicad-check-pcb-component/scripts/check_footprint.py \
 | 脚本 | 0 | 非 0 |
 |---|---|---|
 | `make_part.py` | 成功 | 2 输入/参数错误；3 产物无法被 kicad-cli 加载 |
-| `check_footprint.py` | 全部通过 | 6 存在 NG 项 |
-| `check_symbol.py` | 全部通过 | 9 存在 NG 项 |
+| `check_footprint.py` | 全部通过 | 2 参数错（含缺 `--spec`）；6 存在 NG 项 |
+| `check_symbol.py` | 全部通过 | 2 参数错（含缺要求表/`--groups`）；9 存在 NG 项 |
 | `measure_component.py` | 无 NG 行 | 1 有 NG 行；2 找不到 Gerber |
 | `drc.py` | 无相关违规 | 6 存在违规 |
 | `fit3d.py` | 已渲染 3D 贴合图 | 7 STEP 模型缺失（不渲染） |
@@ -207,6 +215,7 @@ mil（STM32/ATmega/PCA9555 量出来都是 2.54mm），但那是他们的风格�
 
 ```
 kicad-hardware-toolkit/
+├── e2e.py                          端到端回归（需要本机 KiCad；CI 跑不了）
 ├── package.json                    pi 包清单
 ├── requirements.txt
 ├── .github/workflows/test.yml      CI
@@ -256,9 +265,9 @@ kicad-hardware-toolkit/
 Pillow，缺失时标记为跳过而非通过。
 
 ```bash
-python skills/kicad-check-pcb-component/scripts/selftest.py    # 110 项
+python skills/kicad-check-pcb-component/scripts/selftest.py    # 129 项
 python skills/kicad-check-sch-component/scripts/selftest.py    #  41 项
-python skills/kicad-create-lib-part/scripts/selftest.py        #  87 项
+python skills/kicad-create-lib-part/scripts/selftest.py        # 102 项
 ```
 
 针对真实 KiCad 库封装的集成测试（需要 KiCad）：

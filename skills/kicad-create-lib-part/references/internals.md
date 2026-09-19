@@ -10,7 +10,7 @@ skills/kicad-create-lib-part/
 ├── scripts/
 │   ├── make_part.py    ★ 总入口：spec -> 符号 + 封装 + groups.json + fp.spec.json
 │   ├── kicad_io.py     格式版本探测（probe）与可加载性检查（loadable）
-│   └── selftest.py     87 项黄金测试（纯标准库，不需要 CAD）
+│   └── selftest.py     102 项黄金测试（纯标准库，不需要 CAD）
 ├── references/         symbol-rules / footprint-rules / kicad-formats /
 │                       datasheet-extract / internals（本文）
 └── assets/part_spec_template.json
@@ -51,7 +51,7 @@ lint 漏算"名字离本体边缘 0.85mm"这个偏移，估出的名字短了 0.
 改了任何东西之后跑：
 
 ```bash
-python scripts/selftest.py        # 87 项，纯标准库
+python scripts/selftest.py        # 102 项，纯标准库
 ```
 
 ## 本地反向验证时的一个坑：`__pycache__`

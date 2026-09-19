@@ -1,6 +1,5 @@
 {
   "_说明": "本文件是元件的【唯一真源】。引脚表来自手册的 Pin Functions 表，封装数字来自手册的 Package Outline + Example Board Layout 图。改了这里就重生成，不要手改产物。",
-
   "library": "INA239",
   "symbol": "INA239",
   "footprint": "VSSOP-10_3x3mm_P0.5mm",
@@ -9,7 +8,6 @@
   "datasheet": "https://www.ti.com/lit/ds/symlink/ina239.pdf",
   "keywords": "current sense shunt monitor power SPI 16-bit ADC Texas Instruments",
   "fp_filters": "VSSOP*3x3mm?P0.5mm* MSOP*3x3mm?P0.5mm* TSSOP*3x3mm?P0.5mm*",
-
   "_symbol_style_说明": "house style。间距单位 mil。pitch_mil=组内间距，group_gap_mil=组间间距。",
   "symbol_style": {
     "pitch_mil": 200,
@@ -20,38 +18,121 @@
     "font": 1.27,
     "side_align": "top"
   },
-
   "_pins_说明": "side: left/right/top/bottom；group: 功能组名（同组内引脚相邻）。group 相同的引脚会自动挨在一起。组内先后 = 本数组里的先后（所以 MOSI/MISO/SCLK/CS 就按这个顺序写）；组的先后由下面 groups 决定。",
   "pins": [
-    { "number": "2",  "name": "MOSI",     "etype": "input",          "side": "right", "group": "spi" },
-    { "number": "4",  "name": "MISO",     "etype": "output",         "side": "right", "group": "spi" },
-    { "number": "5",  "name": "SCLK",     "etype": "input",          "side": "right", "group": "spi" },
-    { "number": "1",  "name": "~{CS}",    "etype": "input",          "side": "right", "group": "spi" },
-    { "number": "3",  "name": "~{ALERT}", "etype": "open_collector", "side": "right", "group": "int" },
-
-    { "number": "8",  "name": "VBUS",     "etype": "input",          "side": "left",  "group": "bus" },
-    { "number": "10", "name": "IN+",      "etype": "input",          "side": "left",  "group": "shunt" },
-    { "number": "9",  "name": "IN-",      "etype": "input",          "side": "left",  "group": "shunt" },
-
-    { "number": "6",  "name": "VS",       "etype": "power_in",       "side": "top" },
-    { "number": "7",  "name": "GND",      "etype": "power_in",       "side": "bottom" }
+    {
+      "number": "2",
+      "name": "MOSI",
+      "etype": "input",
+      "side": "right",
+      "group": "spi"
+    },
+    {
+      "number": "4",
+      "name": "MISO",
+      "etype": "output",
+      "side": "right",
+      "group": "spi"
+    },
+    {
+      "number": "5",
+      "name": "SCLK",
+      "etype": "input",
+      "side": "right",
+      "group": "spi"
+    },
+    {
+      "number": "1",
+      "name": "~{CS}",
+      "etype": "input",
+      "side": "right",
+      "group": "spi"
+    },
+    {
+      "number": "3",
+      "name": "~{ALERT}",
+      "etype": "open_collector",
+      "side": "right",
+      "group": "int",
+      "reason": "手册 TYPE 列只写 Digital output，但描述里写明 open-drain alert output —— 图上与普通 output 一模一样，只有 ERC 与这句依据能区分"
+    },
+    {
+      "number": "8",
+      "name": "VBUS",
+      "etype": "input",
+      "side": "left",
+      "group": "bus"
+    },
+    {
+      "number": "10",
+      "name": "IN+",
+      "etype": "input",
+      "side": "left",
+      "group": "shunt"
+    },
+    {
+      "number": "9",
+      "name": "IN-",
+      "etype": "input",
+      "side": "left",
+      "group": "shunt"
+    },
+    {
+      "number": "6",
+      "name": "VS",
+      "etype": "power_in",
+      "side": "top"
+    },
+    {
+      "number": "7",
+      "name": "GND",
+      "etype": "power_in",
+      "side": "bottom"
+    }
   ],
-
   "_groups_说明": "每边的功能组顺序（从上到下）。也是给校验 skill 的分组声明 —— 不声明就无法校验'组间 400 mil'这条规则。",
   "groups": {
-    "left":  ["bus", "shunt"],
-    "right": ["spi", "int"]
+    "left": [
+      "bus",
+      "shunt"
+    ],
+    "right": [
+      "spi",
+      "int"
+    ]
   },
-
+  "judgments": {
+    "_说明": "判断依据。etype / side / groups 手册里都没有，是判出来的；判错了画出来一模一样。写在这里，复核时不必重读手册。",
+    "etype_rules": [
+      "Digital/Analog input -> input；output -> output；Power supply/Ground -> power_in",
+      "描述里含 open-drain / open collector -> open_collector（TYPE 列只写 \"Digital output\" 时容易漏）"
+    ],
+    "group_rules": [
+      "按手册里的功能块分组（如 SPI / 分流电阻 / 总线电压）"
+    ],
+    "side_rules": [
+      "电源在上、地在下的 house style"
+    ]
+  },
   "_package_说明": "全部来自手册 DGS0010A 的 Package Outline 与 Example Board Layout（图 4221984/A）。pad.length/width 是 Land Pattern 的 10X 1.45 / 10X 0.3；roundrect_rratio = 图纸圆角 R0.05 / 焊盘短边 0.3。",
   "package": {
     "family": "peripheral",
-    "sides": ["left", "right"],
+    "sides": [
+      "left",
+      "right"
+    ],
     "pads_per_side": 5,
     "pitch": 0.5,
     "row_span_x": 4.4,
-    "pad": { "length": 1.45, "width": 0.3, "roundrect_rratio": 0.166667 },
-    "body": { "w": 3.0, "h": 3.0 },
+    "pad": {
+      "length": 1.45,
+      "width": 0.3,
+      "roundrect_rratio": 0.166667
+    },
+    "body": {
+      "w": 3.0,
+      "h": 3.0
+    },
     "height_req": "MAX 1.1",
     "pad1_corner": "top-left",
     "descr": "VSSOP-10 / MSOP-10, 10 pin, 0.5 mm pitch, 3.0 x 3.0 mm body (JEDEC MO-187 variation BA, Texas Instruments DGS0010A). Land pattern per TI DGS0010A drawing 4221984/A: 10X 1.45 x 0.3 mm pads, 4.4 mm row centre-to-centre.",

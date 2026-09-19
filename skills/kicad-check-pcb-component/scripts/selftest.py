@@ -512,6 +512,99 @@ def test_ep_buried_pads():
     check_exact("buried: EP 边上的焊盘不算 buried", r3["n_buried"], 0)
 
 
+def test_verdict_states():
+    """判定三态，以及“无法判定”绝不当成通过。
+
+    以前 verdict() 在行里没有 nominal/min/max 时直接 return "PASS"。
+    spec 里字段名写错、值写成字符串、整行漏了 —— 全部**静默通过**。
+    """
+    from core import spec as S
+
+    def raiser(rows):
+        try:
+            S.validate_rows(rows)
+            return None
+        except SystemExit as e:
+            return e.code
+
+    check_exact("verdict: 正常 nominal -> 可判",
+                raiser([{"symbol": "D", "kind": "body_w", "nominal": 3.0}]), None)
+    check_exact("verdict: ★ 缺 nominal -> 报错退出（code 2）",
+                raiser([{"symbol": "D", "kind": "body_w"}]), 2)
+    check_exact("verdict: ★ nominal 写成字符串 -> 报错退出",
+                raiser([{"symbol": "D", "kind": "body_w", "nominal": "3.0"}]), 2)
+    check_exact("verdict: ★ 没有 kind -> 报错退出",
+                raiser([{"symbol": "X"}]), 2)
+    check_exact("verdict: min+max 也算有阈值",
+                raiser([{"symbol": "D", "kind": "body_w", "min": 2.9,
+                         "max": 3.1}]), None)
+    check_exact("verdict: kind=na 豁免（它本来就不参与判定）",
+                raiser([{"symbol": "A", "kind": "na"}]), None)
+
+    # 绕过校验时的兜底：宁可“待测”，绝不 PASS
+    check_exact("verdict: 绕过校验时也不会给 PASS",
+                S.verdict("body_w", {"symbol": "D", "kind": "body_w"}, 3.0, 0.005),
+                "待测")
+    check_exact("verdict: 超差就是 NG",
+                S.verdict("body_w", {"kind": "body_w", "nominal": 3.0}, 3.5, 0.005),
+                "NG")
+    check_exact("verdict: 量不到 -> 待测",
+                S.verdict("body_w", {"kind": "body_w", "nominal": 3.0}, None, 0.005),
+                "待测")
+
+
+def test_drc_classification():
+    """DRC 违规的分类。两类是“测试板的默认规则不适合”，不是封装缺陷。
+
+    不分类的后果：官方封装都被报 NG。实测 38 个官方封装里，
+    不开这些分类时有 5 个报 clear、4 个报 silk_overlap —— 全是真的但
+    都不是“封装画错了”。
+    """
+    import drc as D
+    cases = [
+        ({"kind": "lib_footprint_issues", "msg": "当前配置中不包含封装库",
+          "where": "@ Footprint REF**"}, True),
+        ({"kind": "silk_overlap", "msg": "Silkscreen clearance",
+          "where": "@(1,1): Reference field of REF** | @(2,2): Polygon of REF**"}, True),
+        # 丝印压到焊盘上：这是真缺陷，必须阻断
+        ({"kind": "silk_over_copper", "msg": "Silkscreen clearance",
+          "where": "@(1,1): Reference field of REF** | @(2,2): Pad 1"}, False),
+        ({"kind": "clearance", "msg": "间距违规", "where": "@(1,1): Pad"}, False),
+        ({"kind": "courtyards_overlap", "msg": "外框重叠", "where": ""}, False),
+        ({"kind": "drill_out_of_range", "msg": "孔径超出范围", "where": "@(1,1)"}, True),
+    ]
+    for v, want in cases:
+        check_exact("drc: %-18s -> %s" % (v["kind"], "不阻断" if want else "阻断"),
+                    D.is_benign(v), want)
+    # 理由要说人话，不能只给个 True
+    why = D.benign_reason(cases[1][0]) or ""
+    check_exact("drc: 非阻断项带得出理由（不是只给个 True）", "位号" in why, True)
+
+
+def test_panels_do_not_crash():
+    """测不到时应当给“测不到”的面板，而不是 TypeError / ZeroDivisionError。
+
+    这两条以前真的崩：body=None 时解包 NoneType；paste_hole_dia=0 时
+    View 除以 0。崩溃会把整个检查包一起带走。
+    """
+    from core import common
+    pads = qfn32_like()
+    ctx = ctx_of(pads, body=None)
+    ctx["pads"] = pads
+    ctx["body"] = None
+    ctx["board"] = None
+    ctx["drills"] = []
+    for kind, val in (("body_w", None), ("body_h", None),
+                      ("paste_hole_dia", 0.0)):
+        try:
+            img = common.panel(kind, ctx, {}, val, {}, "T")
+            check_exact("panel: %s 不崩" % kind,
+                        img is not None and img.size[0] > 0, True)
+        except Exception as e:                          # noqa: BLE001
+            check_exact("panel: %s 不崩" % kind, False,
+                        "%s: %s" % (type(e).__name__, e))
+
+
 def test_drc_pad_clearance_rule():
     """焊盘短路间距规则必须从 spec（要求侧）推出。
 
@@ -562,6 +655,9 @@ def test_drc_pad_clearance_rule():
 TESTS = [
     ("core: gerber parser", test_gerber_parser),
     ("core: EP-buried pads", test_ep_buried_pads),
+    ("core: verdict states", test_verdict_states),
+    ("core: no-crash panels", test_panels_do_not_crash),
+    ("drc: violation classes", test_drc_classification),
     ("drc: pad clearance rule", test_drc_pad_clearance_rule),
     ("core: pad classification", test_classify),
     ("core: family dispatch", test_family_dispatch),

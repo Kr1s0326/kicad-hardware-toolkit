@@ -99,3 +99,19 @@ jobs:
               print("ok   %s (%s)" % (d.name, name))
           sys.exit(1 if bad else 0)
           PY
+
+  # 端到端回归：spec -> 生成 -> 两个校验 -> NG 必须为 0。
+  # 它同时是唯一会真跑 3D 贴合（fit3d）与 DRC 的地方 —— 别处全是 skip。
+  # GitHub runner 上没有 KiCad，所以这一步会**大声跳过**（退出码 0）。
+  # 本机装了 KiCad 才有意义；跑法：python e2e.py
+  e2e:
+    name: e2e (needs KiCad, skips without)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: e2e
+        run: python e2e.py

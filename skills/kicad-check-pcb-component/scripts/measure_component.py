@@ -72,6 +72,9 @@ def main():
         ap.error("spec.json is required")
 
     spec = spec_mod.load_spec(a.spec)
+    # 先验要求，再量。没有可比较阈值的行会被拦下来 —— 否则它们以前会被
+    # verdict() 静默判成 PASS（见 core/spec.validate_rows 的说明）。
+    spec_mod.validate_rows(spec["rows"])
     root = spec["_root"]
     ctx = spec_mod.build_context(spec)
     ctx["_collinear_tol"] = spec.get("collinear_tol", 0.05)

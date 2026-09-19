@@ -23,7 +23,7 @@ skills/kicad-check-pcb-component/scripts/
 ├── measure_component.py     ★ 只出尺寸测量表（可单独用）
 ├── drc.py                   B：DRC 包装 + 违规解析分类
 ├── fit3d.py                 C：3D 实物贴合
-├── selftest.py              各族黄金测试，不需要 CAD 文件
+├── selftest.py              各族黄金测试（129 项），不需要 CAD 文件
 ├── build_testboards.py      从 KiCad 官方库造真实测试板
 └── crop_spec_table.py       从图纸截图里裁出「要求:图片」列
 
@@ -58,7 +58,7 @@ skills/kicad-check-pcb-component/scripts/
 改了任何东西之后跑：
 
 ```bash
-python scripts/selftest.py                    # 110 项，不需要 CAD
+python scripts/selftest.py                    # 129 项，不需要 CAD
 python scripts/build_testboards.py --run      # 真实 QFN/QFP/SOT-23/SOIC-8/0603 Gerber
 ```
 

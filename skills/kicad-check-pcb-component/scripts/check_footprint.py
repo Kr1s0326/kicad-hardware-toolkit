@@ -50,7 +50,7 @@ SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
 for _p in (HERE, SHARED):
     if _p not in sys.path:
         sys.path.insert(0, _p)
-from cli import guard                             # noqa: E402
+from cli import evidence_head, guard, require, summary   # noqa: E402
 
 try:
     sys.stdout.reconfigure(errors="replace")
@@ -85,7 +85,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("mod")
     ap.add_argument("--outdir", required=True)
-    ap.add_argument("--spec")
+    ap.add_argument("--spec", required=True,
+                    help="要求表（必填）。每一行的「要求:数值 / 要求:图片」都来自它；"
+                         "DRC 的焊盘间距规则也从它推出")
     ap.add_argument("--symbol")
     ap.add_argument("--symbol-name")
     ap.add_argument("--name")
@@ -93,6 +95,19 @@ def main():
     ap.add_argument("--no-3d", action="store_true")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
+
+    # 没有要求表就没法校验，只有自测。
+    #
+    # 本 skill 的每一条结论都是「要求 ↔ 实测」的对比：报告里那两列「要求」
+    # 来自 spec，测量值要和它比才有意义；连 DRC 的焊盘间距规则都是从 spec
+    # 推出来的（精细节距封装用 KiCad 默认的 0.2mm，会报一屏假违规）。
+    # 缺了 spec，工具仍能把 Gerber 量得很准，但**量出来的数字没人知道对不对**，
+    # 而汇总行与退出码看上去还是绿的 —— 那比不跑更坏。
+    require(os.path.isfile(os.path.abspath(a.spec)),
+            "找不到 --spec 指定的要求表：\n  %s\n"
+            "\n本 skill 的每一条结论都是「要求 ↔ 实测」的对比，缺了要求表就无法校验。\n"
+            "生成侧（kicad-create-lib-part）的 --verify 会把该给的 spec 路径打出来。"
+            % os.path.abspath(a.spec))
 
     mod = os.path.abspath(a.mod)
     out = os.path.abspath(a.outdir)
@@ -116,13 +131,23 @@ def main():
     # -> 边到边 0.13mm），拿默认值跑会报一屏“间距违规”，而那**一个缺陷都不是**。
     # 下界从 spec（图纸要求）推，不是从被测封装自己推 —— 取自封装自己的话
     # 规则永远成立，DRC 就成了空跑。
-    if a.spec:
-        _sp = json.load(open(os.path.abspath(a.spec), encoding="utf-8"))
-        gap = spec_mod.min_pad_gap(_sp)
-        if gap and gap > 0:
-            dru = spec_mod.write_dru(pcb, gap)
-            print("drc rules: %s  (pad-to-pad >= %.3fmm，由 spec 推出)"
-                  % (os.path.basename(dru), gap - 0.005))
+    _sp = json.load(open(os.path.abspath(a.spec), encoding="utf-8"))
+    gap = spec_mod.min_pad_gap(_sp)
+    if gap and gap > 0:
+        dru = spec_mod.write_dru(pcb, gap)
+        print("drc rules: %s  (pad-to-pad >= %.3fmm，由 spec 推出)"
+              % (os.path.basename(dru), gap - 0.005))
+    else:
+        # 推不出来（spec 里没有 dia/lead_width 这类能定出相邻焊盘间距的行）。
+        # 不能默不作声地落回 0.2mm —— 那会对精细节距封装报一屏假违规，
+        # 而报告里看不出“这条规则其实没定制过”。
+        print("drc rules: （推不出）—— spec 里缺少能定出相邻焊盘间距的行\n"
+              "           （球阵族需 dia + diag_min/pitch；引脚族需 lead_width + lead_pitch），\n"
+              "           将使用 KiCad 默认的 0.2mm 间距规则，精细节距封装可能报假违规。")
+        ev("DRC 间距规则", "未做", "core/spec.py: min_pad_gap()",
+           "spec 里缺 dia+diag_min/pitch（球阵）或 lead_width+lead_pitch（引脚），"
+           "推不出相邻焊盘的最小间距 —— 本次用了 KiCad 默认 0.2mm。"
+           "若 DRC 报“间距违规”而尺寸表全 PASS，先查这里。")
 
     # ---------------------------------------------------------- 1 Gerber
     step(1, "Gerber 反解量测  (独立通路 A: 量的是制造数据，不是封装文件)")
@@ -130,44 +155,40 @@ def main():
     files = export_gerbers(pcb, gdir)
     print("exported %d files -> %s" % (len(files), gdir))
     xlsx = None
-    if a.spec:
-        spec = os.path.abspath(a.spec)
-        sp = json.load(open(spec, encoding="utf-8"))
-        sp.setdefault("gerber_dir", gdir)
-        tmp = os.path.join(out, "_spec_resolved.json")
-        # spec 会被复制到 outdir 再跑，于是里面**相对路径的基准变成了 outdir**。
-        # 结果：用户在 spec 旁边写的 req_image / spec_table_image 全部找不到，
-        # 而 build_xlsx 里 os.path.exists() 不通过就**静默跳过** —— 报告里
-        # "要求:图片" 列一片空白，还没有任何提示。
-        # 所以在复制前把这几类路径按**原 spec 所在目录**解析成绝对路径。
-        sd = os.path.dirname(spec)
-        def _abs(v):
-            return v if (not v or os.path.isabs(v)) else os.path.normpath(
-                os.path.join(sd, v))
-        for key in ("spec_table_image", "gerber_dir", "img_dir"):
-            if sp.get(key):
-                sp[key] = _abs(sp[key])
-        for r in sp.get("rows", []):
-            if r.get("req_image"):
-                r["req_image"] = _abs(r["req_image"])
-        sp["gerber_dir"] = gdir
-        json.dump(sp, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-        r = run([sys.executable, os.path.join(HERE, "measure_component.py"), tmp,
-                 "--out", os.path.join(out, title + "_report.xlsx"),
-                 "--img-dir", os.path.join(out, "measure")])
-        print(r.stdout or r.stderr)
-        xlsx = os.path.join(out, title + "_report.xlsx")
-        # measure_component 有 NG 行时返回 1。**必须把结论传进 evidence**，
-        # 否则 N 行 NG 也会报"NG 项 0"，CI 直接放过。
-        n_ng = len([l for l in (r.stdout or "").splitlines()
-                    if l.rstrip().endswith("NG") or " NG " in l])
-        ev("尺寸测量表", "NG" if r.returncode else "PASS",
-           "Gerber/Excellon 反解",
-           "%d 行 NG  -> %s" % (n_ng, xlsx) if n_ng else xlsx)
-        look += sorted(glob.glob(os.path.join(out, "measure", "meas_*.png")))[:6]
-    else:
-        print("(未给 --spec，跳过尺寸测量表)")
-        ev("尺寸测量表", "未做", "-", "需要 --spec")
+    spec = os.path.abspath(a.spec)
+    sp = json.load(open(spec, encoding="utf-8"))
+    sp.setdefault("gerber_dir", gdir)
+    tmp = os.path.join(out, "_spec_resolved.json")
+    # spec 会被复制到 outdir 再跑，于是里面**相对路径的基准变成了 outdir**。
+    # 结果：用户在 spec 旁边写的 req_image / spec_table_image 全部找不到，
+    # 而 build_xlsx 里 os.path.exists() 不通过就**静默跳过** —— 报告里
+    # "要求:图片" 列一片空白，还没有任何提示。
+    # 所以在复制前把这几类路径按**原 spec 所在目录**解析成绝对路径。
+    sd = os.path.dirname(spec)
+    def _abs(v):
+        return v if (not v or os.path.isabs(v)) else os.path.normpath(
+            os.path.join(sd, v))
+    for key in ("spec_table_image", "gerber_dir", "img_dir"):
+        if sp.get(key):
+            sp[key] = _abs(sp[key])
+    for r in sp.get("rows", []):
+        if r.get("req_image"):
+            r["req_image"] = _abs(r["req_image"])
+    sp["gerber_dir"] = gdir
+    json.dump(sp, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    r = run([sys.executable, os.path.join(HERE, "measure_component.py"), tmp,
+             "--out", os.path.join(out, title + "_report.xlsx"),
+             "--img-dir", os.path.join(out, "measure")])
+    print(r.stdout or r.stderr)
+    xlsx = os.path.join(out, title + "_report.xlsx")
+    # measure_component 有 NG 行时返回 1。**必须把结论传进 evidence**，
+    # 否则 N 行 NG 也会报"NG 项 0"，CI 直接放过。
+    n_ng = len([l for l in (r.stdout or "").splitlines()
+                if l.rstrip().endswith("NG") or " NG " in l])
+    ev("尺寸测量表", "NG" if r.returncode else "PASS",
+       "Gerber/Excellon 反解",
+       "%d 行 NG  -> %s" % (n_ng, xlsx) if n_ng else xlsx)
+    look += sorted(glob.glob(os.path.join(out, "measure", "meas_*.png")))[:6]
 
     # ---------------------------------------------------------------- 2 DRC
     step(2, "DRC  (独立通路 B: KiCad 自己的规则引擎)")
@@ -182,9 +203,10 @@ def main():
     if not blocking:
         print("  none - 丝印不压盘 / 外框完整 / 无间距违规")
     if benign:
-        # 比如"测试板没注册封装库"—— 与封装质量无关，不刷屏
-        print("  (另 %d 项与被测封装无关，已忽略: %s)"
-              % (len(benign), ", ".join(sorted({v["kind"] for v in benign}))))
+        # 不阻断，但**要说出来是什么**——以前只打一列 kind，看不出为什么不算。
+        print("  另 %d 项不阻断（不是封装缺陷）：" % len(benign))
+        for v in benign:
+            print("    [%s] %s" % (v["kind"], drc_mod.benign_reason(v)))
     ev("DRC", "PASS" if not blocking else "NG", "kicad-cli pcb drc",
        "%d 项相关违规" % len(blocking))
 
@@ -254,8 +276,8 @@ def main():
 
     md = os.path.join(out, "EVIDENCE.md")
     with open(md, "w", encoding="utf-8") as f:
-        f.write("# 封装校验证据包 - %s\n\n" % title)
-        f.write("封装文件: `%s`\n\n" % mod)
+        f.write(evidence_head("封装校验证据包 - %s" % title,
+                  "封装文件: `%s`" % mod, evidence))
         f.write("| 检查项 | 结果 | 数据来源（独立性） | 明细 |\n|---|---|---|---|\n")
         for e in evidence:
             f.write("| %s | %s | %s | %s |\n"
@@ -267,14 +289,8 @@ def main():
         f.write("\n看图要点见 `references/render-and-look.md`。\n")
     print("evidence:", md)
 
-    hard = [e for e in evidence if e["result"] == "NG"]
-    print("\n" + ("=" * 66))
-    print("  NG 项: %d" % len(hard))
-    for e in hard:
-        print("    - %s (%s)" % (e["item"], e["detail"]))
-    print("  下一步: 打开 look_sheet.png 与 EVIDENCE.md，逐图确认后再下结论。")
-    print("=" * 66)
-    sys.exit(6 if hard else 0)
+    sys.exit(summary(evidence, 6,
+                     "下一步: 打开 look_sheet.png 与 EVIDENCE.md，逐图确认后再下结论。"))
 
 
 if __name__ == "__main__":

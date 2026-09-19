@@ -15,8 +15,8 @@ import sys
 
 from core import gerber as G
 
-__all__ = ["load_spec", "build_context", "verdict", "FILE_ALIASES",
-           "min_pad_gap", "DRU_TEMPLATE"]
+__all__ = ["load_spec", "build_context", "verdict", "validate_rows",
+           "FILE_ALIASES", "min_pad_gap", "DRU_TEMPLATE"]
 
 # 自定义 DRC 规则。KiCad 会自动加载与 .kicad_pcb 同名的 .kicad_dru。
 DRU_TEMPLATE = """(version 1)
@@ -138,7 +138,12 @@ def body_rect(gerber, centre, min_len=0.5, radius=4.0, rel=0.4, tol=0.08):
         return None
     try:
         ap, pr = G.parse_gerber(gerber, flip_y=True)
-    except Exception:
+    except Exception as e:                                  # noqa: BLE001
+        # 以前这里是裸的 `except Exception: return None` —— 于是“Gerber 解析
+        # 不动”和“图纸里真没有本体”变成同一个结果，下游只看得到“本体测不到”，
+        # 没人知道是解析器挂了。解析失败必须出声。
+        print("  [warn] 本体外框：%s 解析失败（%s: %s）—— 本体尺寸将报“待测”"
+              % (os.path.basename(gerber), type(e).__name__, e), file=sys.stderr)
         return None
     seg = []
     for x0, y0, x1, y1, ln in G.lines(pr, min_len):
@@ -179,7 +184,15 @@ def body_rect(gerber, centre, min_len=0.5, radius=4.0, rel=0.4, tol=0.08):
 
 
 def build_context(spec):
-    """-> ctx dict (pads, body, board, drills, paste, origin, files)"""
+    """-> ctx dict (pads, body, board, drills, paste, origin, files)
+
+    前置：spec 里要有 `_root`（load_spec() 会加）。直接拿一个裸 dict 调这里
+    以前会 KeyError: '_root' —— 函数签名看不出这个隐含前置条件，所以在这里
+    兜一下：没有就按 spec 自带的 _path 或当前目录算。
+    """
+    if "_root" not in spec:
+        spec = dict(spec)
+        spec["_root"] = os.path.dirname(os.path.abspath(spec.get("_path") or "."))
     ctx = {"files": {k: _resolve(spec, k) for k in FILE_ALIASES}}
     f = ctx["files"]
     if not f["cu"]:
@@ -239,6 +252,50 @@ def build_context(spec):
     return ctx
 
 
+def validate_rows(rows):
+    """每行必须带一个可比较的“要求”，否则报错退出。
+
+    背景：以前 verdict() 在拿不到 nominal/min/max 时直接 return "PASS"。
+    后果是 spec 里字段名写错、值写成字符串、或者整行漏了 —— 全部**静默通过**。
+    一个检查工具静默放行，比它没跑还坏。
+
+    哪些行不需要要求值：
+      * kind == "na"（Z 向尺寸，2D 量不了，本来就只报待测）
+      * 显式写了 na_result（同样是不参与判定的行）
+    其余每一行必须至少有 nominal / min+max 其中之一。
+    """
+    bad = []
+    for i, r in enumerate(rows):
+        kind = r.get("kind")
+        if not kind:
+            bad.append((i, r.get("symbol", "?"), "没有 kind 字段"))
+            continue
+        if kind == "na" or r.get("na_result"):
+            continue
+        has = (r.get("nominal") is not None
+               or (r.get("min") is not None and r.get("max") is not None))
+        if not has:
+            bad.append((i, r.get("symbol", "?"),
+                        "kind=%s 但既没有 nominal，也没有 min+max" % kind))
+        else:
+            for k in ("nominal", "min", "max", "tol"):
+                v = r.get(k)
+                if v is not None and not isinstance(v, (int, float)):
+                    bad.append((i, r.get("symbol", "?"),
+                                "%s 不是数字（%r）—— 写成字符串了？" % (k, v)))
+    if not bad:
+        return
+    lines = "\n".join("  第 %d 行 %-8s %s" % b for b in bad)
+    # SystemExit("字符串") 的退出码恒为 1，而 1 在本工具里表示“有 NG 行”。
+    # 这是输入错，必须是 2 —— 先用 print 把话说清楚，再用数字码退出。
+    print("spec 里有 %d 行的“要求”不可用：\n%s\n\n"
+          "每一行必须给出可比较的阈值：nominal，或 min+max。\n"
+          "（kind 写 `na` 的行例外 —— 它们本来就不参与判定。）\n"
+          "没有阈值的行无法判定，而“无法判定”绝不能当成通过。"
+          % (len(bad), lines), file=sys.stderr)
+    raise SystemExit(2)
+
+
 def verdict(kind, row, value, tol, count_kinds=()):
     """PASS / NG / 待测 for one measured row"""
     if kind == "na" or value is None:
@@ -250,7 +307,11 @@ def verdict(kind, row, value, tol, count_kinds=()):
         return "PASS" if lo - 1e-9 <= value <= hi + 1e-9 else "NG"
     nom = row.get("nominal")
     if nom is None:
-        return "PASS"
+        # 正常情况下 validate_rows() 已经把它拦在门外了。走到这里说明
+        # 有人绕过了校验 —— 宁可报“待测”也不能报 PASS。
+        print("  [warn] 行 %r 没有可比较的要求值，判“待测”（请补 nominal/min/max）"
+              % row.get("symbol", "?"))
+        return "待测"
     return "PASS" if abs(value - nom) <= row.get("tol", tol) + 1e-9 else "NG"
 
 

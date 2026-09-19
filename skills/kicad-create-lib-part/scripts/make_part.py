@@ -75,6 +75,108 @@ from kitext import NAME_OFF, text_len, vert_half               # noqa: E402
 CORNER_GAP = 0.25               # 两排名字在四角要留的净空
 
 
+# ============================================================ 输入校验
+SIDES = ("left", "right", "top", "bottom")
+
+
+def validate(spec):
+    """在算任何几何之前，先把 spec 里的值域查一遍。
+
+    为什么必需：缺字段已经被 KeyError 拦住了，但**值写错**以前全部静默通过，
+    而且产生的是“看着正常”的错误产物。实测过三个：
+
+        side = "middle"          -> 该引脚既不属于任何边，被**静默丢掉**（49->48），
+                                    而工具照常打印“引脚 : 48”
+        package.col_pitch = 0    -> 49 个焊盘全叠到 x=0，工具打印“焊盘 : 49”
+        groups 里写不存在的组名   -> groups.json 里那一项变 null，无任何提示
+
+    生成器一旦交出错误产物，下游要么崩溃、要么量出一堆看着像模像样的数字。
+    在这里拦比在下游猜便宜得多。
+    """
+    errs = []
+
+    def need_num(where, v, positive=True):
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            errs.append("%s = %r 不是数字" % (where, v))
+        elif positive and not v > 0:
+            errs.append("%s = %s 必须大于 0" % (where, v))
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    pins = spec.get("pins")
+    if not isinstance(pins, list) or not pins:
+        print("spec.pins 为空或不是数组 —— 没有引脚就生成不出元件。",
+              file=sys.stderr)
+        raise SystemExit(2)
+
+    declared = spec.get("groups", {}) or {}
+    for side in declared:
+        if side not in SIDES:
+            errs.append("groups 里有认不得的边 %r（只能是 %s）"
+                        % (side, "/".join(SIDES)))
+
+    seen_num, used = set(), set()
+    for i, p in enumerate(pins):
+        num = str(p.get("number", ""))
+        if not num:
+            errs.append("第 %d 个引脚没有 number" % i)
+        elif num in seen_num:
+            errs.append("引脚号 %r 重复" % num)
+        seen_num.add(num)
+        side = p.get("side")
+        if side not in SIDES:
+            # 这条最阴：不认识的边 -> 该引脚不会落入任何一侧 -> 凭空消失。
+            errs.append("引脚 %s 的 side = %r 认不得（只能是 %s）—— "
+                        "它会被静默丢掉，而不是报错"
+                        % (num or i, side, "/".join(SIDES)))
+            continue
+        used.add((side, p.get("group")))
+        if declared.get(side) and p.get("group") not in declared[side]:
+            errs.append("引脚 %s 的 group=%r 不在 groups[%s] 里：%s"
+                        % (num, p.get("group"), side, declared[side]))
+
+    # 声明了却没有任何引脚的组 -> 画出来是个空组
+    for side, gs in declared.items():
+        if side not in SIDES:
+            continue
+        for g in (gs or []):
+            if (side, g) not in used:
+                errs.append("groups[%s] 里的 %r 没有任何引脚" % (side, g))
+
+    pkg = spec.get("package") or {}
+    for k in ("pitch", "col_pitch"):
+        if k in pkg:
+            need_num("package.%s" % k, pkg[k])
+    for k in ("array_w", "array_h"):
+        if k in pkg:
+            need_num("package.%s" % k, pkg[k])
+    if "body" in pkg:
+        for k in ("w", "h"):
+            if k in pkg["body"]:
+                need_num("package.body.%s" % k, pkg["body"][k])
+    if pkg.get("family") != "grid_array" and "row_span_x" in pkg:
+        need_num("package.row_span_x", pkg["row_span_x"])
+
+    for i, p in enumerate(pins):
+        r = p.get("reason")
+        if r is not None and not isinstance(r, str):
+            errs.append("引脚 %s 的 reason 不是字符串" % p.get("number", i))
+    j = spec.get("judgments")
+    if j is not None and not isinstance(j, dict):
+        errs.append("judgments 应当是对象（含 etype_rules / group_rules）")
+
+    st = spec.get("symbol_style", {})
+    for k in ("pitch_mil", "group_gap_mil", "pin_length_mil"):
+        if k in st:
+            need_num("symbol_style.%s" % k, st[k])
+
+    if errs:
+        print("spec 有 %d 处值不对：\n%s\n"
+              % (len(errs), "\n".join("  - " + e for e in errs)), file=sys.stderr)
+        print("这些值写错时，以前的后果是**静默产出错误产物**，"
+              "而不是报错。对照 assets/part_spec_template.json 改。", file=sys.stderr)
+        raise SystemExit(2)
+
+
 # ============================================================ 符号布局
 def layout_symbol(spec):
     st = spec.get("symbol_style", {})
@@ -577,6 +679,75 @@ def emit_groups(spec, lay):
     return g
 
 
+# 需要写依据的电气类型：这几个不是"看名字就知道"的，判错了图上完全看不出来，
+# 而 ERC 只能验"符号内部自洽"，验不了"这个脚该不该是 passive"。
+NEEDS_REASON = ("passive", "open_collector", "open_emitter", "unspecified",
+                "tri_state", "power_out")
+
+
+def emit_judgments(spec, lay):
+    """把 AI/LLM 的判断依据写成一份可复核的表。
+
+    为什么需要：`etype` 和 `groups` 手册里没有，是从上下文判的。以前 spec 里
+    只留下**结果**（power_in / p2），没有任何"为什么" —— 三个月后要复核，
+    只能把手册重读一遍再判一次，而且没法判断"当时判得对不对"。
+
+    这份文件让判断可审计：规则（共用）写在 `spec.judgments` 里，
+    例外逐条写在 `pins[].reason` 上，最后按引脚列成表。
+    """
+    j = spec.get("judgments", {}) or {}
+    pins = lay["pins"]
+    groups = lay["groups"]
+    g_of = {}
+    for side, gs in groups.items():
+        for gi, names in enumerate(gs):
+            for nm in names:
+                g_of[nm] = "%s / 第 %d 组" % (side, gi + 1)
+
+    L = ["# %s —— 符号判断依据" % spec["symbol"], ""]
+    L.append("`etype`、`side`、`groups` 手册里都没有，是从手册上下文判的。")
+    L.append("判错了**画出来一模一样**，只能由 ERC（类型）、契约（号↔盘）、目视（摆放）证伪。")
+    L.append("所以把依据留在这里，供复核。")
+    L.append("")
+    L.append("来源：`%s`（`spec.judgments` 与 `pins[].reason`）" % spec.get("datasheet", "-"))
+    L.append("")
+
+    for title, key in (("电气类型规则", "etype_rules"), ("功能分组规则", "group_rules"),
+                       ("摆放规则", "side_rules")):
+        rules = j.get(key) or []
+        if rules:
+            L.append("## %s" % title)
+            L.append("")
+            for r in rules:
+                L.append("* %s" % r)
+            L.append("")
+
+    lack = [p for p in pins if p.get("etype") in NEEDS_REASON and not p.get("reason")]
+    L.append("## 逐引脚")
+    L.append("")
+    L.append("| 球号 | 名称 | 电气类型 | 分组 | 依据 |")
+    L.append("|---|---|---|---|---|")
+    for p in sorted(pins, key=lambda q: (len(q["number"]), q["number"])):
+        r = p.get("reason") or ("规则见上" if p.get("etype") not in NEEDS_REASON
+                                else "**（未写，需补）**")
+        L.append("| %s | %s | `%s` | %s | %s |"
+                 % (p["number"], plain(p["name"]), p["etype"],
+                    g_of.get(plain(p["name"]), p.get("side", "-")), r))
+    L.append("")
+    if lack:
+        L.append("## 待补依据")
+        L.append("")
+        L.append("下面这些引脚的电气类型不是\"看名字就知道\"的，但 spec 里没写 `reason`：")
+        L.append("")
+        for p in lack:
+            L.append("* `%s` %s -> `%s`" % (p["number"], plain(p["name"]), p["etype"]))
+        L.append("")
+        L.append("（`%s` 这类类型靠 ERC 验不出来，只能靠人看依据。）"
+                 % " / ".join("`%s`" % x for x in NEEDS_REASON))
+        L.append("")
+    return "\n".join(L)
+
+
 def emit_fp_spec_grid(spec, pads):
     """球栅阵列的尺寸表，走 JEDEC 那一套符号。
 
@@ -689,6 +860,7 @@ def emit_fp_spec(spec, pads):
 # ============================================================ main
 def generate(spec_path, outdir):
     spec = json.load(open(spec_path, encoding="utf-8"))
+    validate(spec)
     os.makedirs(outdir, exist_ok=True)
     fmts = kio.probe_formats()
     sym_v = fmts.get("sym_version", "20211014")
@@ -744,10 +916,14 @@ def generate(spec_path, outdir):
     fsp = os.path.join(outdir, spec["library"] + ".fp.spec.json")
     json.dump(emit_fp_spec(spec, pads), open(fsp, "w", encoding="utf-8"),
               ensure_ascii=False, indent=2)
+    # 判断依据跟着产物走 —— 校验侧会把它带进证据包，复核时不必重读手册。
+    jdg = os.path.join(outdir, spec["library"] + ".judgments.md")
+    with open(jdg, "w", encoding="utf-8", newline="\n") as f:
+        f.write(emit_judgments(spec, lay))
 
     return {"sym": sym_path, "fp": fp_path, "pretty": pretty,
-            "groups": grp, "fp_spec": fsp, "layout": lay, "pads": pads,
-            "spec": spec, "warnings": warns}
+            "groups": grp, "fp_spec": fsp, "judgments": jdg,
+            "layout": lay, "pads": pads, "spec": spec, "warnings": warns}
 
 
 @guard

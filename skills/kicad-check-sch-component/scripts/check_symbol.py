@@ -45,7 +45,7 @@ SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
 for _p in (HERE, SHARED):
     if _p not in sys.path:
         sys.path.insert(0, _p)
-from cli import guard                             # noqa: E402
+from cli import evidence_head, guard, require, summary   # noqa: E402
 
 try:
     sys.stdout.reconfigure(errors="replace")
@@ -75,17 +75,37 @@ def main():
     ap.add_argument("--symbol")
     ap.add_argument("--pdf", help="数据手册 PDF（自动抽引脚表）")
     ap.add_argument("--pins-json", dest="pins_json",
-                    help="人工录入的要求表 {\"1\": {\"name\":..,\"etype\":..}, ...}；"
+                    help="要求表 {\"A11\": {\"name\":..,\"etype\":..}, ...}；"
                          "与 --pdf 二选一，用于 pdf_pins 认不了的排版/语言")
     ap.add_argument("--pdf-table", default="Table 5-1")
-    ap.add_argument("--groups")
+    ap.add_argument("--groups", help="分组声明（必填）。来自创建侧刚生成的 groups.json")
     # 默认 None：优先用命令行显式给的值，其次用 groups.json 里的 _style，
     # 最后才回退到 200/400。这样改了创建侧的规范，校验侧自动跟上。
     ap.add_argument("--min-pitch", type=float, default=None, help="mil，默认取 groups.json 的 _style，否则 200")
     ap.add_argument("--group-gap", type=float, default=None, help="mil，默认取 groups.json 的 _style，否则 400")
     ap.add_argument("--grid", type=float, default=50.0, help="mil")
     ap.add_argument("--footprint")
+    ap.add_argument("--judgments",
+                    help="创建侧产出的 <LIB>.judgments.md（eType/分组的判断依据）；"
+                         "不给就去 .kicad_sym 旁边找")
     a = ap.parse_args()
+
+    # 要求侧必备。本 skill 的结论全部是「手册 ↔ KiCad 自己的解读」的对比：
+    # 没有要求表，就只剩下一堆几何量测与网表导出 —— 数字都对，但**没人知道
+    # 对不对**。而汇总行与退出码看上去还是绿的，那比不跑更坏。
+    require(bool(a.pdf or a.pins_json),
+            "必须给要求表：--pdf（数据手册）或 --pins-json（人工录入的要求表）。\n"
+            "\n本 skill 的核心产出是『手册引脚表 ↔ 网表 ↔ ERC』三方比对。\n"
+            "没有要求表就无法比对，只剩几何量测和网表导出，那不算校验。\n"
+            "如果只是想过一遍绘制规范，用 symbol_lint.py（它不需要手册）。")
+    # 分组同样是要输入的：“组间 400 mil” 这条规则**几何上不可判** ——
+    # 把 IN+ 挪一格就能得到另一个同样合规的分组。没有声明就只能几何推断，
+    # 而推断结果只能拿来对账，不能当真。
+    require(bool(a.groups),
+            "必须给 --groups（分组声明）。\n"
+            "\n『组间 400 mil』几何上不可判：左侧 VBUS|IN+|IN- 把 IN+ 挪一格，\n"
+            "间距就从 400/200 变成 200/400 —— 两种都合规，只是分组不同。\n"
+            "所以分组是**输入**。正常流程里创建侧的 groups.json 就是它。")
 
     lib = os.path.abspath(a.lib)
     out = os.path.abspath(a.outdir)
@@ -291,10 +311,27 @@ def main():
         render.contact_sheet(look, sheet, cols=min(3, len(look)), cell=620,
                              title="%s - look at this" % r["symbol"])
         print("look sheet:", sheet)
+    # 判断依据：`etype` / `groups` 手册里没有，是判出来的。把依据带进证据包，
+    # 复核的人不必把手册重读一遍再判一次。
+    jdg = a.judgments
+    if not jdg:
+        d = os.path.dirname(lib)
+        guess = os.path.join(os.path.dirname(d), os.path.basename(d) + ".judgments.md")
+        jdg = guess if os.path.exists(guess) else None
+    jd_text = ""
+    if jdg and os.path.exists(jdg):
+        ev("判断依据(eType/分组)", "见文档", os.path.basename(jdg),
+           "**不是检查项** —— 创建侧写下的判断依据，供复核时追溯")
+        jd_text = open(jdg, encoding="utf-8").read()
+    else:
+        ev("判断依据(eType/分组)", "未做", "-",
+           "没有 judgments.md —— eType 与分组是怎么判的无从追溯"
+           "（创建侧的 make_part.py 会生成）")
+
     md = os.path.join(out, "EVIDENCE.md")
     with open(md, "w", encoding="utf-8") as f:
-        f.write("# 符号校验证据包 - %s\n\n" % r["symbol"])
-        f.write("符号文件: `%s`\n\n" % lib)
+        f.write(evidence_head("符号校验证据包 - %s" % r["symbol"],
+                  "符号文件: `%s`" % lib, evidence))
         f.write("| 检查项 | 结果 | 数据来源（独立性） | 明细 |\n|---|---|---|---|\n")
         for e in evidence:
             f.write("| %s | %s | %s | %s |\n"
@@ -303,16 +340,13 @@ def main():
         for p in look:
             f.write("* `%s`\n" % os.path.relpath(p, out).replace("\\", "/"))
         f.write("\n看图要点见 `references/render-and-look.md`。\n")
+        if jd_text:
+            f.write(chr(10) + "---" + chr(10) * 2)
+            f.write(jd_text if jd_text.endswith(chr(10)) else jd_text + chr(10))
     print("evidence:", md)
 
-    hard = [e for e in evidence if e["result"] == "NG"]
-    print("\n" + "=" * 66)
-    print("  NG 项: %d" % len(hard))
-    for e in hard:
-        print("    - %s (%s)" % (e["item"], e["detail"]))
-    print("  下一步: 打开 look_sheet.png 与 EVIDENCE.md，逐图确认后再下结论。")
-    print("=" * 66)
-    sys.exit(9 if hard else 0)
+    sys.exit(summary(evidence, 9,
+                     "下一步: 打开 look_sheet.png 与 EVIDENCE.md，逐图确认后再下结论。"))
 
 
 if __name__ == "__main__":

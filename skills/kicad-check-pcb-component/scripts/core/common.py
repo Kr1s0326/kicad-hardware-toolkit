@@ -89,6 +89,25 @@ def na_panel(sym, row):
     return img
 
 
+def _missing_panel(sym, kind, value, exp, pads, ox, oy):
+    """测不到时的面板：画焊盘底图 + 一句“为什么测不到”。
+
+    比崩溃好，也比一张空白图好 —— 看图的人需要知道是“没量到”还是“量出 0”。
+    """
+    where = {"body_w": "本体", "body_h": "本体",
+             "paste_hole_dia": "钢网层实心圆"}.get(kind, kind)
+    why = {"body_w": "丝印/装配层上找不到闭合的本体矩形",
+           "body_h": "丝印/装配层上找不到闭合的本体矩形",
+           "paste_hole_dia": "钢网层没有实心圆（或没导出该层）"}.get(kind, "数据不足")
+    V = D.View((min(p[0] for p in pads) - ox - 0.4, min(p[1] for p in pads) - oy - 0.4,
+                max(p[0] for p in pads) - ox + 0.4, max(p[1] for p in pads) - oy + 0.4))
+    img, d = D.new_panel("%s  %s：**测不到**" % (sym, where))
+    D.draw_pads(d, V, G.move_pads(pads, ox, oy), exposed=exp)
+    d.text((20, 40), "原因：%s" % why, fill=D.RED, font=D.font(15))
+    d.text((20, 62), "该行判“待测”，不得当作通过", fill=D.RED, font=D.font(15))
+    return img
+
+
 def _exposed(ctx):
     """散热焊盘的**相对**坐标（带形状），没有就 None。
 
@@ -111,6 +130,11 @@ def panel(kind, ctx, row, value, extra, sym):
     if kind == "na":
         return na_panel(sym, row)
     if kind in ("body_w", "body_h"):
+        # measure() 在本体识别不到时返回 None，verdict 会把它标成“待测”。
+        # 但画图这条路径以前直接解包 ctx["body"] —— 于是从“待测”变成
+        # TypeError 崩溃，把整个检查包一起带走。
+        if not ctx.get("body"):
+            return _missing_panel(sym, kind, value, exp, pads, ox, oy)
         bx0, by0, bx1, by1 = ctx["body"]
         bx0, by0, bx1, by1 = bx0 - ox, by0 - oy, bx1 - ox, by1 - oy
         if kind == "body_w":
@@ -130,6 +154,10 @@ def panel(kind, ctx, row, value, extra, sym):
                 "hole_edge"):
         return _board_panel(kind, ctx, sym, value)
     if kind == "paste_hole_dia":
+        # 没有钢网层 / 没有实心圆时 measure 返回 0.0，View 会 ÷0。
+        # 0 本就不可能是合法孔径，直接走“测不到”的面板。
+        if not value or abs(value) < 1e-9:
+            return _missing_panel(sym, kind, value, exp, pads, ox, oy)
         V = D.View((-value, -value, value, value))
         img, d = D.new_panel("%s  钢网开孔实心圆 Ø%.3f mm" % (sym, value))
         c = V.pt(0, 0)

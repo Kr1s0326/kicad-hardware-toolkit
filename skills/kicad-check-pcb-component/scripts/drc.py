@@ -58,6 +58,11 @@ SEV = {"error": "error", "错误": "error",
 # 与封装质量无关、不值得阻断的项
 BENIGN = ("lib_footprint_issues", "not in the library", "封装库")
 
+# 位号 / 值 字段的名字。KiCad 的 DRC 报告里出现这些词，说明这一方是**标注文字**。
+FIELD_WORDS = ("reference field", "value field", "reference field of",
+               "位号字段", "值字段", "reference field of ref",
+               "reference field of val")
+
 VIOL_RE = re.compile(r"^\[(?P<kind>[^\]]+)\]:\s*(?P<msg>.*)$", re.M)
 
 
@@ -78,13 +83,49 @@ def parse_report(text):
             if cur is not None and low == k:
                 cur["severity"] = v
         if cur is not None and line.strip().startswith("@"):
-            cur["where"] = line.strip()
+            # 一条违规有两方（@ 行出现两次）。以前只留最后一行，于是
+            # “谁碰了谁”丢掉一半 —— 下面按“位号字段 vs 丝印”分类就做不了。
+            cur["where"] = (cur["where"] + " | " + line.strip()).lstrip(" |")
     return out
 
 
-def is_benign(v):
+def benign_reason(v):
+    """-> 非阻断的理由；应当阻断则返回 None。
+
+    两类不算封装缺陷：
+
+    1. 测试板没注册封装库 —— 与封装本身无关（lib_footprint_issues）。
+
+    2. **丝印文字与丝印记号相交，而其中一方是位号/值字段**。这是 KiCad 官方
+       封装里很常见的现象（实测 38 个官方封装里 4 个中招），但它是**标注
+       摆放**问题：位号文字的位置存在封装里、上板后由用户按需移动，不属于
+       封装的制造性。真正的缺陷是“丝印压到焊盘上”（silk_over_copper），
+       那条仍然阻断。
+
+    注意“不算 NG”不等于“不说”：这两类会原样打进报告，只是不当阻断。
+    """
     blob = (v["kind"] + " " + v["msg"]).lower()
-    return any(b.lower() in blob for b in BENIGN)
+    if any(b.lower() in blob for b in BENIGN):
+        return "测试板没注册封装库，与封装质量无关"
+    # 只放 silk_overlap（丝印 vs 丝印），**绝不放 silk_over_copper**
+    # （丝印/文字压在焊盘上）—— 后者是真的制造缺陷：阻焊开窗被压、
+    # 文字印在焊盘上会被抹掉。“双方都是丝印”才是可移动的标注摆放问题。
+    # （这条一开始写宽了，是 selftest 里的 silk_over_copper 用例抳回来的。）
+    w = (v.get("where") or "").lower()
+    if ("silk_overlap" in blob and "silk_over_copper" not in blob
+            and any(t in w for t in FIELD_WORDS)):
+        return "位号/值文字的摆放问题（上板后可移动），不是封装几何缺陷"
+    # 孔径超范围：测试板上没有工艺参数，KiCad 用的是默认最小孔径 0.3mm。
+    # QFN 热过孔常见 0.2mm —— 那是需要特定工艺，不是**封装画错**。
+    # 真需要卡这个就得把工艺参数写进 spec（目前 schema 里没有）。
+    if "drill_out_of_range" in blob or "孔径超出范围" in blob:
+        return ("测试板没有工艺参数，KiCad 用了默认最小孔径；"
+                "孔径本身是封装设计值，需按你的板厂能力判")
+    return None
+
+
+def is_benign(v):
+    return benign_reason(v) is not None
 
 
 def run_drc(pcb, report=None, severity_all=True):
