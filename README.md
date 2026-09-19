@@ -235,19 +235,20 @@ kicad-hardware-toolkit/
     │   ├── SKILL.md
     │   ├── assets/part_spec_template.json
     │   ├── references/             symbol-rules, footprint-rules,
-    │   │                           kicad-formats, datasheet-extract
+    │   │                           kicad-formats, datasheet-extract,
+    │   │                           internals (维护用)
     │   └── scripts/                make_part.py, kicad_io.py, selftest.py
     ├── kicad-check-sch-component/
     │   ├── SKILL.md
     │   ├── assets/groups_template.json
-    │   ├── references/checks.md
+    │   ├── references/             checks.md, internals (维护用)
     │   └── scripts/                check_symbol, symbol_lint, sch_build,
     │                               sch_netlist, sch_erc, pdf_pins,
     │                               pin_report, selftest
     └── kicad-check-pcb-component/
         ├── SKILL.md
         ├── assets/spec_template.json
-        ├── references/families.md
+        ├── references/             families.md, internals (维护用)
         └── scripts/
             ├── check_footprint, measure_component, drc, fit3d,
             │   selftest, build_testboards, crop_spec_table
@@ -285,8 +286,12 @@ CI 卡的判据（`.github/workflows/test.yml` 的 `skill-frontmatter`）：
 
 * `name` 只能是小写字母 + 数字 + 连字符，且**必须等于目录名**；
 * **`description` ≤ 1024 字符** —— 这条容易踩：description 既给人看又给
-  模型做技能选择，很容易写长了。现在三个分别是 1012 / 859 / 1011，
-  **余量很小**，改之前先量一下：
+  模型做技能选择，很容易写长。现在三个是 795 / 764 / 770，余量够；改之前先量一下。
+
+  > description 是**唯一常驻上下文**的东西（SKILL.md 只在触发时加载）。
+  > 写的时候只留两样：**是干什么的** + **什么时候该用**（把各种叫法都列上，
+  > 比如 `元器件尺寸测量表 / 尺寸检查表 / dimension inspection report`）。
+  > 实现细节（内部几步、产出文件清单）对选择没帮助，只稀释触发词。
 
 ```bash
 python - <<'PY'

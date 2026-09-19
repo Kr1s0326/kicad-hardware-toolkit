@@ -1,6 +1,6 @@
 ---
 name: kicad-create-lib-part
-description: Generates a complete KiCad library part - a schematic symbol (.kicad_sym), a PCB footprint (.kicad_mod), and the pin-number/pad-number link - from one part_spec.json holding the datasheet pin table and package drawing numbers. Symbol house style is 200 mil within a functional group and 400 mil between groups (fixed, never per-part), top-aligned sides, power pins on top/bottom. Footprint conventions by family: peripheral (QFN/QFP/SOIC/TSSOP/SOT-23/DPAK) and chip (0402-1206/SOD/MELF) use roundrect land pads, silkscreen clipped around pads, fab outline and a 12-segment courtyard; grid_array (WLCSP/CSP/BGA/LGA) uses circular pad_prop_bga pads placed straight from the JEDEC ball name, a rectangular courtyard at body +1.0mm, and a Fab chamfer of 0.5*min. Also emits the groups.json and dimension spec the check skills consume. Use when asked to create, generate, write or add a KiCad symbol, footprint, 原理图符号, PCB 封装, .kicad_sym, .kicad_mod, or a new part in a library from a datasheet or a package drawing.
+description: Generates a complete KiCad library part - a schematic symbol (.kicad_sym), a PCB footprint (.kicad_mod) and the pin-number/pad-number link - from one part_spec.json holding the datasheet pin table and package drawing numbers. Applies a fixed symbol house style (200 mil within a functional group, 400 mil between groups, top-aligned sides, power pins on top/bottom) and per-family footprint conventions for peripheral (QFN/QFP/SOIC/TSSOP/SOT-23/DPAK), chip (0402-1206/SOD/MELF) and grid_array (WLCSP/CSP/BGA/LGA). Also emits the groups.json and dimension spec the two check skills consume. Use when asked to create, generate, write or add a KiCad symbol, footprint, 原理图符号, PCB 封装, .kicad_sym, .kicad_mod, or a new part in a library from a datasheet or a package drawing.
 license: MIT
 ---
 
@@ -207,23 +207,11 @@ N = (交错图案下的占位数) − A1 之类的空位数      不是 MD × ME
 **别用 N 去反推 MD**，也别指望 `MD × ME` 能对上 `N` —— 校验侧的 `matrix_cols`
 是按列栅格间距除出来的，与 N 无关。
 
-## 布局
+## 内部结构不在这里
 
-```
-skills/kicad-create-lib-part/
-├── scripts/
-│   ├── make_part.py    ★ 总入口：spec -> 符号 + 封装 + groups.json + fp.spec.json
-│   ├── kicad_io.py     格式版本探测（probe）与可加载性检查（loadable）
-│   └── selftest.py     87 项黄金测试（纯标准库，不需要 CAD）
-├── references/         symbol-rules / footprint-rules / kicad-formats /
-│                       datasheet-extract
-└── assets/part_spec_template.json
-
-<toolkit>/shared/        ← 三个 skill 共用；**不在本 skill 的 scripts/ 下**
-└── kitext.py           KiCad 文本渲染常数（与 symbol_lint.py 共用）
-```
-
-**本 skill 里没有一行渲染代码。** 那是有意的 —— 见上面「本 skill 的边界」。
+目录树、"出问题先看哪"、以及 `shared/kitext.py` 为什么必须两边共用，
+都搬到 **[references/internals.md](references/internals.md)** 了 ——
+那些是**改这套代码时**才需要的。拿它生成元件不用读。
 
 ## 输出可加载性检查
 
@@ -238,19 +226,6 @@ python scripts/kicad_io.py loadable <path>        # 能否被解析（rc=2 表�
 
 **判定不能只看 returncode。** kicad-cli 加载失败返回 2，但成功时消息是
 `符号库未更新` / `已使用最新格式成功保存`，两种要一起看。
-
-## 出问题先看哪
-
-| 症状 | 文件 |
-|---|---|
-| 引脚分组/间距不对 | `make_part.py` 的 `layout_symbol()` / `sequence()` |
-| 焊盘编号方向反了 | `layout_pads()`（+Y 向下的坑） |
-| 丝印压到焊盘上 | `silk_lines()` 的 `COPPER_CLR` / `SILK_W` |
-| 外框形状不对 | `courtyard_cross()`（**不能**因为 PY<by 就把 PY 拉平） |
-| 生成的符号/封装 KiCad 加载不了 | `emit_symbol()` / `emit_footprint()` 的 token |
-| 四角的引脚名叠在一起 | `layout_symbol()` 的四角净空段（常数在 `shared/kitext.py`）|
-| 引脚全掉在 50 mil 栅格外 | `layout_symbol()` 末尾的 `hw` 向上取整 |
-| 版本号不对 | `kicad_io.probe_formats()` |
 
 ## 一次完整的流程
 
@@ -270,3 +245,4 @@ python scripts/kicad_io.py loadable <path>        # 能否被解析（rc=2 表�
 * [references/footprint-rules.md](references/footprint-rules.md) —— 封装的几何细则与校准数据
 * [references/kicad-formats.md](references/kicad-formats.md) —— s-expression 的格式坑
 * [references/datasheet-extract.md](references/datasheet-extract.md) —— 从 PDF 抽表和抽图
+* [references/internals.md](references/internals.md) —— **维护用**：目录树 / 出问题先看哪

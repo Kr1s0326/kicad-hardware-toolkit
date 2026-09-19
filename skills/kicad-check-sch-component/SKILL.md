@@ -1,6 +1,6 @@
 ---
 name: kicad-check-sch-component
-description: Verifies a KiCad schematic symbol against its datasheet through four independent evidence paths - (1) house-style lint on geometry (pin pitch, functional grouping, grid alignment, body fit, name overflow), (2) a netlist that KiCad itself exports after parsing the symbol, (3) ERC to extract the electrical types KiCad actually inferred, (4) a rendered PNG for human eyeball review - plus the pin-number <-> pad-number contract cross-check against a footprint. Reports a three-way comparison table PDF pin table vs netlist names vs ERC electrical types with PASS / NG. Use when asked to check, verify, lint or review a schematic symbol / 原理图符号 / .kicad_sym, to confirm pins match the datasheet, to enforce symbol drawing rules (200 mil within a functional group, 400 mil between groups), or to find pins that are off-grid, mis-typed, duplicated or overlapping.
+description: Verifies a KiCad schematic symbol against its datasheet: house-style lint on the geometry (pitch, functional grouping, grid alignment, body fit, corner text overlap), the netlist KiCad exports after parsing the symbol, ERC for the electrical types KiCad actually inferred, a rendered PNG to eyeball, and a pin-number <-> footprint-pad contract check. Reports a three-way table (datasheet pin table vs netlist names vs ERC types) with PASS / NG plus an Excel pin sheet. Use when asked to check, verify, lint or review a schematic symbol / 原理图符号 / .kicad_sym, to confirm the pins match the datasheet, to enforce symbol drawing rules (200 mil within a functional group, 400 mil between groups), or to find pins that are off-grid, mis-typed, duplicated or overlapping.
 license: MIT
 ---
 
@@ -98,46 +98,14 @@ A~D 四条各自看符号的一个侧面；E 不是第四条，它是**跟另一
 
 ---
 
-## 布局
+## 内部结构不在这里
 
-```
-skills/kicad-check-sch-component/
-├── scripts/
-│   ├── check_symbol.py   ★ 总入口：跑完 A~E，出证据包
-│   ├── symbol_lint.py    A：规矩检查（纯几何，无需 KiCad，可单独用）
-│   ├── sch_build.py      把 .kicad_sym 塞进最小 .kicad_sch
-│   ├── sch_netlist.py    B：导网表 + 解析 KiCad 眼中的引脚
-│   ├── sch_erc.py        C：跑 ERC + 提取电气类型 + 分类违规
-│   ├── pdf_pins.py       从手册 PDF 抽引脚表（含 open-drain 识别）
-│   ├── pin_report.py     引脚比对表 xlsx（由 cmp_pins.json 生成）
-│   └── selftest.py       41 项黄金测试（纯标准库，不需要 CAD）
-├── references/
-│   └── checks.md         每一项检查的数据来源、判定、以及做不到的部分
-└── assets/
-    └── groups_template.json  分组声明模板（把这个填了再跑）
+目录树、"出问题先看哪"、共享代码说明都在
+**[references/internals.md](references/internals.md)** —— 那些是**改这套代码时**
+才需要的。拿它校验符号不用读。
 
-<toolkit>/shared/          ← 三个 skill 共用；**不在本 skill 的 scripts/ 下**
-├── render.py             D：kicad-cli 出 SVG -> headless chrome 出 PNG
-├── pinmap.py             E：引脚↔焊盘编号契约
-├── kitext.py             KiCad 文本渲染常数（与 make_part.py 共用）
-├── cli.py / toolchain.py 统一异常包装、找 kicad-cli
-└── render-and-look.md    出图命令 + 踩过的坑 + 看图清单
-```
-
-> **常见踩坑：** `render.py` / `pinmap.py` 不在本 skill 的 `scripts/` 里。
-> 直接 `python scripts/render.py` 会 `No such file or directory`。
-> 从本目录用 `../../shared/render.py`。
-
-**出问题先看哪**
-
-| 症状 | 文件 |
-|---|---|
-| 间距/分组判断不对 | `symbol_lint.py` 的 `side_of()` / `root_of()`（rot 的含义容易搞反） |
-| 网表里少引脚 / 名字不对 | `sch_build.py`（符号块切分）+ 检查 `.kicad_sym` 本身 |
-| ERC 报一堆 `endpoint_off_grid` | `sch_build.py` 的放置点没吸附到 1.27 mm 栅格 |
-| ERC 该报的没报 | `sch_erc.py` 的 `EXPECTED` 集合把真信号滤掉了 |
-| 手册引脚抽不出来 | `pdf_pins.py` 的 `ROW` 正则 / `--page-table` 标记 |
-| 图出不来 | `render.py`（见 render-and-look.md 的坑表） |
+用得到的就一句：**`render.py` / `pinmap.py` 在 `<toolkit>/shared/`，不在
+本 skill 的 `scripts/` 下**（从本目录用 `../../shared/`）。
 
 ## 工作流
 
@@ -166,7 +134,7 @@ python scripts/symbol_lint.py lib.kicad_sym [--groups g.json]
 python scripts/pdf_pins.py ds.pdf [--page-table "Table 5-1"] [--dump] [--overrides o.json]
 python scripts/sch_netlist.py lib.kicad_sym workdir [--symbol NAME]
 python scripts/sch_erc.py sch.kicad_sch
-python scripts/symbol_lint.py lib.kicad_sym          # A（上面已列，可单独跑）
+python scripts/pin_report.py cmp_pins.json          # 由 cmp_pins.json 重生 xlsx
 python ../../shared/pinmap.py --symbol lib.kicad_sym [--footprint fp.kicad_mod]
 python ../../shared/render.py sym lib.kicad_sym outdir
 ```
@@ -189,17 +157,3 @@ python ../../shared/render.py sym lib.kicad_sym outdir
 | `kicad-check-pcb-component` | 校验 PCB 封装。引脚↔焊盘契约由两边共同成立。 |
 
 **创建保证"可加载"，校验保证"正确"。** 别把这两件事混进一个 skill。
-
-## 共享代码
-
-`toolchain.py`（找 kicad-cli/chrome）、`cli.py`（统一错误处理）、
-`render.py`、`pinmap.py`、`kitext.py`、`render-and-look.md` 都在
-**`<toolkit>/shared/`**，只有一份。skill 通过 `../../shared/` 引用
-（脚本里由 `SHARED` 常量解析）。
-
-**改一处就够，不存在漂移。**
-
-> `kitext.py` 装的是 KiCad 文本渲染常数（字符宽 / 名字离边距离 / 竖排半宽）。
-> 生成侧 `make_part.py` 用它算本体得多宽，校验侧 `symbol_lint.py` 用它反推
-> 两截文字会不会撞。**两边必须同组** —— 各写一份的话，生成侧按一套值留了空间、
-> 校验侧按另一套值判断，明明压着字却报"无疑问項"。
