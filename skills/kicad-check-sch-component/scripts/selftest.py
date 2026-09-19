@@ -33,6 +33,7 @@ SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
 if SHARED not in sys.path:
     sys.path.insert(0, SHARED)
 
+import pin_report                                             # noqa: E402
 import symbol_lint                                            # noqa: E402
 from pinmap import pins_of                                    # noqa: E402
 
@@ -270,6 +271,38 @@ def test_pins_of(tmp):
 
 
 # ---------------------------------------------------------------------------
+def test_pin_report_verdict(tmp):
+    """引脚比对表的判定：只有"两边都有 + 名字一致 + 类型一致"才算 PASS。
+
+    这里的每一行都对应一种真实错误：
+      类型错  —— 画出来一模一样，只有 ERC 能发现
+      名字错  —— 几何全对，只有名字比对能发现
+      缺引脚  —— 手册有、符号没有；或反过来
+    """
+    v = pin_report.verdict
+    ok = {"pin": "1", "pdf_name": "MOSI", "netlist_name": "MOSI",
+          "pdf_etype": "input", "erc_etype": "input",
+          "name_ok": True, "type_ok": True}
+    check("pin_report", "全对 -> PASS", v(ok) == "PASS", v(ok))
+
+    bad_type = dict(ok, erc_etype="output", type_ok=False)
+    check("pin_report", "电气类型不符 -> NG", v(bad_type) == "NG", v(bad_type))
+
+    bad_name = dict(ok, netlist_name="MISO", name_ok=False)
+    check("pin_report", "名字不符 -> NG", v(bad_name) == "NG", v(bad_name))
+
+    only_pdf = dict(ok, netlist_name="-", name_ok=False)
+    check("pin_report", "手册有、网表没有 -> NG", v(only_pdf) == "NG", v(only_pdf))
+
+    only_net = dict(ok, pdf_name="-", name_ok=False)
+    check("pin_report", "网表有、手册没有 -> NG", v(only_net) == "NG", v(only_net))
+
+    # 表格形状必须和需求一致（列名是给用户看的接口）
+    check("pin_report", "表头 = pin|手册名|网表名|手册类型|ERC类型|结果",
+          pin_report.HEAD == ["pin", "手册名", "网表名", "手册类型", "ERC类型", "结果"],
+          str(pin_report.HEAD))
+
+
 def test_multi_unit(tmp):
     """带 INA239_0_1 / INA239_1_1 子块 + 另一个符号，不能把后面的符号算进来"""
     pins = [("1", "A", "input", -7.62, 0.0, 0, 2.54)]
@@ -291,7 +324,8 @@ def main():
     pat = sys.argv[1] if len(sys.argv) > 1 else ""
     with tempfile.TemporaryDirectory() as tmp:
         for fn in (test_pitch_and_groups, test_groups_shape,
-                   test_grid_duplicate_body, test_pins_of, test_multi_unit):
+                   test_grid_duplicate_body, test_pins_of, test_pin_report_verdict,
+                   test_multi_unit):
             if pat and pat not in fn.__name__:
                 continue
             try:

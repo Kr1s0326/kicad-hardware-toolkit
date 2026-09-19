@@ -199,12 +199,30 @@ def main():
                      "ok" if c["type_ok"] else "NG"))
         json.dump(cmp_rows, open(os.path.join(out, "cmp_pins.json"), "w",
                                  encoding="utf-8"), ensure_ascii=False, indent=2)
+        # 引脚比对表（xlsx）—— 与封装侧的尺寸测量表同一套样式与判定习惯
+        import pin_report as pr
+        xlsx = pr.build_xlsx(
+            cmp_rows, os.path.join(out, r["symbol"] + "_pins.xlsx"),
+            title=r["symbol"],
+            notes=[
+                "要求列（手册名 / 手册类型）：pdf_pins.py 从数据手册 " + a.pdf_table + " 抽取。",
+                "实测列（网表名 / ERC类型）：kicad-cli sch export netlist 与 sch erc 的输出。",
+                "两列都不取自 .kicad_sym 的文本，所以能抓到「文本看着对、KiCad 读出来不对」的错。",
+                "任一侧缺这个引脚即判 NG（少引脚与多引脚都是真错）。",
+                "规格检查（间距 / 分组 / 栅格 / 本体）的结果在 lint.txt 与 EVIDENCE.md 里。",
+            ])
+        print("  引脚比对表:", xlsx)
+        ev("引脚比对表(xlsx)",
+           "PASS" if bad == 0 else "NG",
+           "pdfplumber 读手册 -> 网表名 + ERC 类型（都不读我的 .kicad_sym）",
+           "%d/%d 引脚不一致 -> %s" % (bad, len(nums), os.path.basename(xlsx)))
         ev("手册比对(号/名/电气类型)",
            "PASS" if bad == 0 else "NG",
-           "pdfplumber 读 Table -> 网表名 + ERC 类型（都不读我的 .kicad_sym）",
+           "同上，明细见引脚比对表",
            "%d/%d 引脚不一致" % (bad, len(nums)))
     else:
         print("\n(未给 --pdf：跳过与手册的比对 —— 这是最重要的一条，建议补上)")
+        ev("引脚比对表(xlsx)", "未做", "-", "需要 --pdf（没有手册就没有「要求」一列）")
         ev("手册比对", "未做", "-", "需要 --pdf")
 
     # ------------------------------------------------------------ D 目视

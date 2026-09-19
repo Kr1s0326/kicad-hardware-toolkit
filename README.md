@@ -12,15 +12,23 @@ part_spec.json ──> kicad-create-lib-part ──┬──> LIB.kicad_sym
                           LIB.kicad_mod   ──> kicad-check-pcb-component
 ```
 
-校验脚本以 Gerber、Excellon、网表、STEP 模型为输入，不读生成器写出的文本本身。
+量测值与比对结果不取自生成器写出的文本：封装量 Gerber，符号的引脚名与电气类型
+取自网表与 ERC。但两个校验器都会读 `.kicad_mod` / `.kicad_sym` —— 前者用于内联成
+测试板，后者用于搭建原理图；读进来的内容不参与取值。
 
 ## 组件
 
-| 组件 | 职责 | 不做 |
+| 组件 | 职责 | 产出 |
 |---|---|---|
-| `kicad-create-lib-part` | 由 `part_spec.json` 生成 `.kicad_sym`、`.kicad_mod`、以及校验所需的 `groups.json` / `fp.spec.json` | 不做正确性判断，不含任何渲染代码 |
-| `kicad-check-sch-component` | 校验符号：绘制规范、网表、ERC、与手册比对、渲染、引脚契约 | 不生成任何文件 |
-| `kicad-check-pcb-component` | 校验封装：Gerber 量测、DRC、3D 实物贴合、渲染、引脚契约 | 不生成任何文件 |
+| `kicad-create-lib-part` | 由 `part_spec.json` 生成元件 | `LIB.kicad_sym`、`LIB.pretty/FP.kicad_mod`，以及校验所需的 `LIB.groups.json` / `LIB.fp.spec.json` |
+| `kicad-check-sch-component` | 校验符号：绘制规范、网表、ERC、与手册比对、渲染、引脚契约 | `<符号>_pins.xlsx`（引脚比对表，需 `--pdf`）、`EVIDENCE.md`、`look_sheet.png`、`lint.txt`、`cmp_pins.json`、`<符号>.kicad_sch` / `.net` / `.erc.rpt`、`sym/*.png` |
+| `kicad-check-pcb-component` | 校验封装：Gerber 量测、DRC、3D 实物贴合、渲染、引脚契约 | `<名称>_report.xlsx`（尺寸测量表，需 `--spec`）、`EVIDENCE.md`、`look_sheet.png`、`board.kicad_pcb`、`gerber/*`（9）、`drc.rpt`、`fit3d_*.png`、`fp/*.png`、`measure/*.png` |
+
+两份 xlsx 的文件名：符号侧取符号名；封装侧取 `--name`，未给时取封装名。
+另有少量中间文件供复现（`_spec_resolved.json`、`board.kicad_prl`）。
+
+两个校验器不产出元件库交付物（`.kicad_sym` / `.kicad_mod`），它们只读这两类文件
+来建板与建原理图；表中的量测值与比对结果均不取自这些文本（见下）。
 
 生成器与校验器分离是硬约束：若生成侧也做"看着没问题"的判断，校验即退化为自证。
 生成器只保证产物能被 `kicad-cli` 加载。
@@ -114,8 +122,19 @@ python $TK/skills/kicad-check-pcb-component/scripts/check_footprint.py \
        --spec out/LIB.fp.spec.json --symbol out/LIB/LIB.kicad_sym
 ```
 
-两个命令各产出一份 `EVIDENCE.md`（逐项结论与数据来源）和 `look_sheet.png`
+两份 Excel 检查表：
+
+| 文件 | 形状 | 数据来源 |
+|---|---|---|
+| `chk_sch/<符号>_pins.xlsx` | `pin \| 手册名 \| 网表名 \| 手册类型 \| ERC类型 \| 结果` | 手册 Table 5-1（要求） vs 网表名 + ERC 类型（实测） |
+| `chk_pcb/<名称>_report.xlsx` | `index \| 要求:图片 \| 要求:数值 \| 实际测量:图片 \| 实际测量:数值 \| 结果` | 图纸尺寸（要求） vs Gerber/Excellon 反解（实测） |
+
+两个命令还各产出 `EVIDENCE.md`（逐项结论与数据来源）和 `look_sheet.png`
 （所有图拼成一张）。审阅 `look_sheet.png`、`fit3d_*.png` 后再下结论。
+
+引脚比对表只在给了 `--pdf` 时生成 —— 没有手册就没有"要求"一列。
+规格检查（间距 / 分组 / 栅格 / 本体）的结果在 `lint.txt` 与 `EVIDENCE.md` 里，
+不重复进 xlsx。
 
 ## 退出码
 
@@ -178,7 +197,8 @@ kicad-hardware-toolkit/
     │   ├── assets/groups_template.json
     │   ├── references/checks.md
     │   └── scripts/                check_symbol, symbol_lint, sch_build,
-    │                               sch_netlist, sch_erc, pdf_pins, selftest
+    │                               sch_netlist, sch_erc, pdf_pins,
+    │                               pin_report, selftest
     └── kicad-check-pcb-component/
         ├── SKILL.md
         ├── references/families.md
@@ -217,7 +237,8 @@ CI 在每次 push 时运行上述三个 selftest、pyflakes，以及 SKILL.md fr
 
 - **无实物验证。** 最终确认需要把器件焊到板上。
 - **图纸录入错误无法检出。** 量测只能证明"封装与 spec 一致"。若 spec 中的数值录入
-  有误，所有校验会一致通过。spec 中每个数值均注明来源图纸标注，是唯一的缓解手段。
+  有误，所有校验会一致通过。当前缓解手段是 spec 内的**块级**来源注记
+  （如 `_package_说明` 记录图纸号），**没有**做到逐值注记。
 - **符号的跨引脚电气冲突未检查。** 当前为"孤立符号 ERC + 电气类型提取"，
   检出短路类问题需要构造测试台原理图。
 - **四边封装（QFP / QFN）** 已有 selftest 覆盖，但尚未用真实厂家图纸走完整流程。
