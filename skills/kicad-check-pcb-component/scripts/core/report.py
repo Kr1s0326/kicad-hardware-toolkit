@@ -15,6 +15,11 @@ __all__ = ["build_xlsx", "preview_png"]
 HEAD = ["index", "要求:图片", "要求:数值", "实际测量:图片", "实际测量:数值", "结果"]
 COLW = [54, 439, 215, 481, 369, 105]
 ROW_H, HEAD_PX = 333, 34
+# "要求:图片" 多是图纸裁切，纵横比各异（引脚布局那种又高又窄）。
+# 直接按原始像素塞进去会**溢出到相邻行**（xlsx 的图片是浮动对象）；
+# 但缩得太小又看不清。做法：PNG 保持高分辨率，只把**显示尺寸**缩到
+# 单元格里 —— 在 Excel 里放大后细节仍可读。行高随之按需增高，封顶。
+REQ_MAX_H = 420
 RES_FILL = {"PASS": ("C6EFCE", "006100"), "NG": ("FFC7CE", "9C0006")}
 # NB: openpyxl colours carry no "#"; preview_png adds it for PIL
 
@@ -56,9 +61,14 @@ def build_xlsx(spec, rows, values, results, req_imgs, meas_imgs, out):
         rc.alignment = Alignment(horizontal="center", vertical="center")
         for c in range(1, 7):
             ws.cell(row=r, column=c).border = border
-        ws.row_dimensions[r].height = spec.get("row_height", 250)
+        row_h = spec.get("row_height", 250)
         if req_imgs[i] and os.path.exists(req_imgs[i]):
-            ws.add_image(XLImage(req_imgs[i]), "B%d" % r)
+            ri = XLImage(req_imgs[i])
+            sc = min((COLW[1] - 16) / ri.width, REQ_MAX_H / ri.height, 1.0)
+            ri.width, ri.height = max(1, int(ri.width * sc)), max(1, int(ri.height * sc))
+            ws.add_image(ri, "B%d" % r)
+            row_h = max(row_h, ri.height + 12)      # 别让图压到下一行
+        ws.row_dimensions[r].height = row_h
         ws.add_image(XLImage(meas_imgs[i]), "D%d" % r)
 
     for col, w in zip("ABCDEF", COLW[1:] and (7, 62, 30, 68, 52, 12)):
@@ -127,7 +137,12 @@ def preview_png(xlsx, out=None, img_dir=None):
             n = r - 1
     if not n:
         return None
-    W, H = sum(COLW), HEAD_PX + ROW_H * n
+    rowy = [int(ws.row_dimensions[r].height or ROW_H) for r in range(2, 2 + n)]
+    ytop, yy = [], HEAD_PX
+    for h in rowy:
+        ytop.append(yy)
+        yy += h
+    W, H = sum(COLW), HEAD_PX + sum(rowy)
     img = Image.new("RGB", (W, H + 1), "white")
     d = ImageDraw.Draw(img)
     x = 0
@@ -135,16 +150,18 @@ def preview_png(xlsx, out=None, img_dir=None):
         x += w
         d.line([(x, 0), (x, H)], fill="#bbbbbb")
     d.rectangle([0, 0, W - 1, HEAD_PX - 1], fill="#305496")
+    yy = HEAD_PX
     for cy in range(n + 1):
-        d.line([(0, HEAD_PX + cy * ROW_H), (W, HEAD_PX + cy * ROW_H)],
-               fill="#bbbbbb")
+        d.line([(0, yy), (W, yy)], fill="#bbbbbb")
+        if cy < n:
+            yy += rowy[cy]
     x = 4
     for i in range(6):
         d.text((x, 8), str(ws.cell(row=1, column=i + 1).value or ""),
                fill="white", font=FB)
         x += COLW[i]
     for r in range(2, 2 + n):
-        y = HEAD_PX + (r - 2) * ROW_H
+        y = ytop[r - 2]
         v = [ws.cell(row=r, column=c).value for c in range(1, 7)]
         d.text((10, y + 10), str(v[0]), fill="black", font=F)
         # 要求:数值 在第 3 列，起点是前两列宽度之和 ——
@@ -160,14 +177,27 @@ def preview_png(xlsx, out=None, img_dir=None):
         tw = d.textlength(str(v[5] or ""), font=FB)
         d.text((xr + (COLW[5] - tw) / 2, y + ROW_H / 2 - 12), str(v[5] or ""),
                fill="#" + fg, font=FB)
+    # 行高是按需增高的，累计出来才知道每行画在哪
+    ytop, rowy = [], HEAD_PX
+    for r in range(2, 2 + n):
+        ytop.append(rowy)
+        rowy += int(ws.row_dimensions[r].height or ROW_H)
     for fn in sorted(os.listdir(img_dir)):
         m = re.match(r"(req|meas)_(\d+)_", fn)
         if not m or int(m.group(2)) >= n:
             continue
         i = int(m.group(2))
-        pos = ((COLW[0] + 4, HEAD_PX + i * ROW_H + 55) if m.group(1) == "req"
-               else (COLW[0] + COLW[1] + COLW[2] + 4, HEAD_PX + i * ROW_H + 2))
-        img.paste(Image.open(os.path.join(img_dir, fn)), pos)
+        src = Image.open(os.path.join(img_dir, fn))
+        if m.group(1) == "req":
+            # 和 build_xlsx 用同一套缩放规则，否则预览与 xlsx 不一致
+            sc = min((COLW[1] - 16) / src.width, REQ_MAX_H / src.height, 1.0)
+            if sc < 1.0:
+                src = src.resize((max(1, int(src.width * sc)),
+                                  max(1, int(src.height * sc))), Image.LANCZOS)
+            pos = (COLW[0] + 8, ytop[i] + 55)
+        else:
+            pos = (COLW[0] + COLW[1] + COLW[2] + 4, ytop[i] + 2)
+        img.paste(src, pos)
     out = out or os.path.splitext(xlsx)[0] + "_preview.png"
     img.save(out)
     return out

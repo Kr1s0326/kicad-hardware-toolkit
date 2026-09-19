@@ -110,12 +110,14 @@ def new_panel(title, size=PANEL):
     return img, d
 
 
-def put_label(d, xy, text, colour=RED, size=15, centre=False):
+def put_label(d, xy, text, colour=RED, size=15, centre=False, right=False):
     f = font(size)
     w = d.textlength(text, font=f)
     x, y = xy
     if centre:
         x -= w / 2
+    elif right:
+        x -= w
     d.rectangle([x - 3, y - 2, x + w + 3, y + size + 3], fill="white")
     d.text((x, y), text, fill=colour, font=f)
 
