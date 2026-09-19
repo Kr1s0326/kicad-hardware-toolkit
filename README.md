@@ -3,31 +3,43 @@
 从数据手册生成 KiCad 元件（原理图符号 + PCB 封装），并对产物做独立校验。
 
 ```mermaid
-%%{init: {"flowchart": {"wrappingWidth": 420}}}%%
+%%{init: {"flowchart": {"wrappingWidth": 460}}}%%
 flowchart TD
     DS["① 数据手册 PDF<br/>引脚表 · 封装图"]
     SPEC["② part_spec.json<br/>唯一真源"]
     GEN["③ kicad-create-lib-part"]
     ART["④ 产物<br/>符号 .kicad_sym<br/>封装 .kicad_mod<br/>groups.json · fp.spec.json"]
-    CHK["⑤ 独立校验<br/>kicad-check-sch-component<br/>kicad-check-pcb-component"]
-    REP["⑥ 证据<br/>xlsx · EVIDENCE.md<br/>look_sheet.png<br/>3D 贴合图"]
+    CHK["⑤ 独立校验（脚本）<br/>kicad-check-sch-component<br/>kicad-check-pcb-component"]
+    REP["⑥ 证据包<br/>xlsx · EVIDENCE.md<br/>look_sheet.png · 3D 贴合图"]
+    LOOK["⑦ 人工过目<br/>逐张看图后才允许下结论"]
 
-    DS -->|人工录入| SPEC
+    DS -->|"人工录入<br/>引脚表 · 分组 · 封装数字"| SPEC
     SPEC --> GEN
     GEN --> ART
     ART --> CHK
     CHK --> REP
+    REP --> LOOK
     DS -.->|校验时独立回看手册| CHK
 
     classDef gen fill:#fff2e2,stroke:#e8590c,stroke-width:2px
     classDef chk fill:#e7f0ff,stroke:#3b5bdb,stroke-width:2px
     classDef rep fill:#eaf7ee,stroke:#2f9e44,stroke-width:2px
+    classDef man fill:#ffe8f0,stroke:#c2255c,stroke-width:2px
     class GEN gen
     class CHK chk
     class REP rep
+    class SPEC,LOOK man
 ```
 
-图中虚线是关键：**校验不读生成器写出的文本，而是独立回看手册** ——
+图上**粉色是人工环节，有两处，缺一不可**：
+
+* **①→② 写 spec** —— 引脚表半自动（`pdf_pins.py` 只认 TI 那套英文表，
+  中文/其他版式要手抄）；**功能分组和封装数字永远是人判**（手册不写分组，
+  机械图的数字也读不出来）。
+* **⑦ 人工过目** —— 脚本产出 `look_sheet.png` / `fit3d_*.png` 之后，
+  **必须逐张看过才能下结论**。这是设计上的强制项：没过目不算已验证。
+
+虚线是另一条关键约束：**校验不读生成器写出的文本，而是独立回看手册** ——
 封装量 Gerber，符号的引脚名与电气类型取网表与 ERC。
 
 两个校验器都会读 `.kicad_mod` / `.kicad_sym` —— 前者用于内联成测试板，
@@ -45,7 +57,7 @@ flowchart TD
 另有少量中间文件供复现（`_spec_resolved.json`、`board.kicad_prl`）。
 
 两个校验器不产出元件库交付物（`.kicad_sym` / `.kicad_mod`），它们只读这两类文件
-来建板与建原理图；表中的量测值与比对结果均不取自这些文本（见下）。
+来建板与建原理图；表中的量测值与比对结果均不取自这些文本（见上图虚线）。
 
 生成器与校验器分离是硬约束：若生成侧也做"看着没问题"的判断，校验即退化为自证。
 生成器只保证产物能被 `kicad-cli` 加载。
