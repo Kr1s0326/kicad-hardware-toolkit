@@ -416,6 +416,39 @@ def test_pad_shape_and_panels():
         check_exact("panel_pads/② %s 面板画出了焊盘（填充像素 %d）" % (kind, n),
                     n > 200, True)
 
+    # ③ 尺寸线必须量在**正确的轴**上。
+    #    踩过的坑：lead_length 的两支写反了 —— 左/右引脚本该沿 x 量长边，
+    #    却用了 dim_v，画出一条 0.8 的**竖直线**，视觉上跨两个间距，
+    #    看着像在量 pitch。数值碰巧对，图是错的。
+    #    直接拦住 dim_h / dim_v 的调用，比看图可靠。
+    def dim_calls(kind, value):
+        got = []
+        oh, ov = D.dim_h, D.dim_v
+        D.dim_h = lambda d, V, a, b, *ar, **kw: got.append(("h", round(abs(b - a), 6)))
+        D.dim_v = lambda d, V, a, b, *ar, **kw: got.append(("v", round(abs(b - a), 6)))
+        try:
+            fam.panel(kind, ctx, {}, value, {}, "T")
+        finally:
+            D.dim_h, D.dim_v = oh, ov
+        return got
+
+    # 面板挑中的那个焊盘在哪条边上，决定了长边/窄边各沿哪个轴：
+    #   左/右引脚：长边沿 x -> L 用 h、窄边沿 y -> b 用 v
+    #   上/下引脚：长边沿 y -> L 用 v、窄边沿 x -> b 用 h
+    # （这里**不能写死**期望的轴 —— 一开始写死了，结果面板按 _leads() 的顺序
+    #   挑到上边焊盘，测试反而把对的代码判成错的。）
+    _sel = min(fam._leads(ctx), key=lambda q: min(q[2], q[3]))
+    _w, _h, _side = max(_sel[2], _sel[3]), min(_sel[2], _sel[3]), _sel[4]
+    _tb = _side in ("top", "bottom")
+    check_exact("panel_axis/③ 选中焊盘在 %s 边 (长边沿 %s)"
+                % (_side, "y" if _tb else "x"), True, True)
+    check_exact("panel_axis/③ b 量窄边 -> %s，跨度 %.2f"
+                % ("水平" if _tb else "竖直", _h),
+                dim_calls("lead_width", _h), [("h" if _tb else "v", round(_h, 6))])
+    check_exact("panel_axis/③ L 量长边 -> %s，跨度 %.2f"
+                % ("竖直" if _tb else "水平", _w),
+                dim_calls("lead_length", _w), [("v" if _tb else "h", round(_w, 6))])
+
 
 TESTS = [
     ("core: gerber parser", test_gerber_parser),

@@ -139,13 +139,23 @@ def _map_view(ctx, pad=0.5):
     return (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
 
 
-def _draw_map(d, V, ctx):
+def _draw_map(d, V, ctx, hi_xy=()):
+    """画焊盘图。hi_xy 里的 (x,y)（**相对坐标**）会被高亮。
+
+    高亮很重要：e / b / L 三个面板都画同一片焊盘区域，不高亮就分不出
+    到底在量哪一个、量的是哪条边 —— 用户看到的就是三张差不多的图。
+    """
     ox, oy = ctx["origin"]
     P = G.move_pads(ctx["pads"], ox, oy)
+    hi = set()
+    for i, q in enumerate(P):
+        for hx, hy in hi_xy:
+            if abs(q[0] - hx) < 1e-6 and abs(q[1] - hy) < 1e-6:
+                hi.add(i)
     exposed = ctx["peri"].get("exposed")
     exposed = (exposed["x"] - ox, exposed["y"] - oy, exposed["w"],
                exposed["h"], exposed.get("shape", "")) if exposed else None
-    D.draw_pads(d, V, P, exposed=exposed)
+    D.draw_pads(d, V, P, hi=hi or None, exposed=exposed)
     return P
 
 
@@ -173,13 +183,13 @@ def panel(kind, ctx, row, value, extra, sym):
             V = D.View((a[0] - a[2] * 2.2, a[1] - a[3] * 1.8,
                         a[0] + a[2] * 2.2, b[1] + b[3] * 1.8))
             img, d = D.new_panel("%s  引脚间距 e = %.3f mm" % (sym, value))
-            _draw_map(d, V, ctx)
+            _draw_map(d, V, ctx, hi_xy=[(a[0], a[1]), (b[0], b[1])])
             D.dim_v(d, V, a[1], b[1], a[0] - a[2] * 1.5, "%.4f" % value)
         else:
             V = D.View((a[0] - a[2] * 1.8, a[1] - a[3] * 2.2,
                         b[0] + b[2] * 1.8, a[1] + a[3] * 2.2))
             img, d = D.new_panel("%s  引脚间距 e = %.3f mm" % (sym, value))
-            _draw_map(d, V, ctx)
+            _draw_map(d, V, ctx, hi_xy=[(a[0], a[1]), (b[0], b[1])])
             D.dim_h(d, V, a[0], b[0], a[1] - a[3] * 1.5, "%.4f" % value)
         return img
 
@@ -210,15 +220,24 @@ def panel(kind, ctx, row, value, extra, sym):
         img, d = D.new_panel("%s  %s = %.3f mm"
                              % (sym, "引脚宽度 b" if kind == "lead_width"
                                 else "引脚长度 L", value))
-        _draw_map(d, V, ctx)
-        if kind == "lead_width":
-            D.dim_h(d, V, x - h / 2, x + h / 2, y - h * 1.2, "%.4f" % value) \
-                if side in ("top", "bottom") else \
+        _draw_map(d, V, ctx, hi_xy=[(x, y)])
+        # _leads() 把焊盘归一成 w>=h，于是轴的方向跟所在边有关：
+        #   左/右引脚：w 沿 x（长边）、h 沿 y（窄边）
+        #   上/下引脚：w 沿 y（长边）、h 沿 x（窄边）
+        # 踩过的坑：lead_length 的两支正好写反了 —— 左/右引脚用 dim_v
+        # 量出 0.8 的**竖直线**，视觉上跨了两个间距，看着像在量 pitch。
+        # 数值碰巧对（长边就是 0.8），但图画错了，反倒是“看着像错的”。
+        tb = side in ("top", "bottom")
+        if kind == "lead_width":                 # b = 窄边
+            if tb:
+                D.dim_h(d, V, x - h / 2, x + h / 2, y - h * 1.6, "%.4f" % value)
+            else:
                 D.dim_v(d, V, y - h / 2, y + h / 2, x - w * 1.2, "%.4f" % value)
-        else:
-            D.dim_h(d, V, x - w / 2, x + w / 2, y - h * 1.2, "%.4f" % value) \
-                if side in ("top", "bottom") else \
+        else:                                    # L = 长边
+            if tb:
                 D.dim_v(d, V, y - w / 2, y + w / 2, x - w * 1.2, "%.4f" % value)
+            else:
+                D.dim_h(d, V, x - w / 2, x + w / 2, y - h * 1.6, "%.4f" % value)
         return img
 
     if kind in ("ep_x", "ep_y"):

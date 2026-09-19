@@ -96,6 +96,7 @@ scripts/
 | 某一族的图画得不对 | 那个 `families/*.py` 的 `panel()` |
 | 板子跑不了 DRC / 3D | `core/board.py` |
 | 图出不来 / 出来是空白 | `scripts/render.py` |
+| 改了代码但行为没变 | **先删 `__pycache__`**（见下） |
 
 改了任何东西之后跑：
 
@@ -182,3 +183,18 @@ python scripts/build_testboards.py --run      # 真实 QFN/QFP/SOT-23/SOIC-8/060
 `render.py`、`pinmap.py`、`render-and-look.md` 都在 **`<toolkit>/shared/`**，只有一份。skill 通过 `../../shared/` 引用（脚本里由 `SHARED` 常量解析）。
 
 **改一处就够，不存在漂移。**
+
+## 本地验证时的一个坑：`__pycache__`
+
+做"改坏一处、看测试会不会红"这种反向验证时，如果改动是**等长替换**
+（例如把 `dim_h` 和 `dim_v` 对调），文件大小不变；一旦 mtime 落在同一时间
+刻度上，Python 会**复用旧字节码** —— 你会看到"改了却没生效"，很容易误判成
+"测试没用"。
+
+本仓库已经因此误判过一次。本地做反向验证前先清：
+
+```bash
+find . -name __pycache__ -type d -exec rm -rf {} +
+```
+
+CI 每次都是全新 checkout，不受影响。
