@@ -1,0 +1,11 @@
+# 脚本和文档统一 LF（Windows 上 git 默认转 CRLF，会让 diff 一片红）
+* text=auto eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.xlsx binary
+*.step binary
+*.kicad_pcb text eol=lf
+*.kicad_mod text eol=lf
+*.kicad_sym text eol=lf

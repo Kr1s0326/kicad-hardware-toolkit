@@ -1,0 +1,299 @@
+{
+  "title": "元器件尺寸测量表",
+  "component": "REPLACE ME - e.g. Infineon PSoC 62 49-ball WLCSP SG-XFWLB-49",
+  "output": "dimension_report.xlsx",
+  "sheet_name": "尺寸测量",
+  "tolerance": 0.005,
+  "gerber_dir": "gerber",
+  "files": {},
+  "pad_filter": "mode",
+  "spec_table_image": "",
+  "spec_table_skip": 2,
+  "rows": [
+    {
+      "symbol": "A",
+      "requirement": "MAX 0.467",
+      "kind": "na",
+      "note": "包高（Z 向）"
+    },
+    {
+      "symbol": "A1",
+      "requirement": "MIN 0.122",
+      "kind": "na",
+      "note": "球高（Z 向）"
+    },
+    {
+      "symbol": "D",
+      "requirement": "2.8819 BSC",
+      "kind": "body_w",
+      "nominal": 2.8819,
+      "note": "本体宽度，实测自本体外框"
+    },
+    {
+      "symbol": "E",
+      "requirement": "3.1024 BSC",
+      "kind": "body_h",
+      "nominal": 3.1024,
+      "note": "本体高度，实测自本体外框"
+    },
+    {
+      "symbol": "D1",
+      "requirement": "2.100 BSC",
+      "kind": "array_w",
+      "nominal": 2.1,
+      "note": "球阵列 D 向跨距"
+    },
+    {
+      "symbol": "E1",
+      "requirement": "2.484 BSC",
+      "kind": "array_h",
+      "nominal": 2.484,
+      "note": "球阵列 E 向跨距"
+    },
+    {
+      "symbol": "MD",
+      "requirement": "11",
+      "kind": "matrix_cols",
+      "nominal": 11,
+      "note": "D 向矩阵位数"
+    },
+    {
+      "symbol": "ME",
+      "requirement": "9",
+      "kind": "matrix_rows",
+      "nominal": 9,
+      "note": "E 向矩阵位数"
+    },
+    {
+      "symbol": "N",
+      "requirement": "49",
+      "kind": "count",
+      "nominal": 49,
+      "note": "焊球总数"
+    },
+    {
+      "symbol": "Øb",
+      "requirement": "0.188 / 0.218 / 0.248",
+      "kind": "dia",
+      "min": 0.188,
+      "max": 0.248,
+      "nominal": 0.218,
+      "note": "焊盘 / 钢网开孔直径"
+    },
+    {
+      "symbol": "eD",
+      "requirement": "0.42 BSC",
+      "kind": "pitch",
+      "nominal": 0.42,
+      "note": "同排球中心间距"
+    },
+    {
+      "symbol": "eE3s",
+      "requirement": "0.682 BSC",
+      "kind": "row_span",
+      "from": "E",
+      "to": "G",
+      "nominal": 0.682,
+      "note": "G 排 至 E 排球心距"
+    },
+    {
+      "symbol": "eE2s",
+      "requirement": "0.621 BSC",
+      "kind": "row_span",
+      "from": "F",
+      "to": "H",
+      "nominal": 0.621,
+      "note": "H 排 至 F 排球心距"
+    },
+    {
+      "symbol": "eE1s",
+      "requirement": "0.56 BSC",
+      "kind": "row_span",
+      "from": "G",
+      "to": "J",
+      "nominal": 0.56,
+      "note": "J 排 至 G 排球心距"
+    },
+    {
+      "symbol": "eS1",
+      "requirement": "0.35 BSC",
+      "kind": "diag_min",
+      "nominal": 0.35,
+      "note": "斜向最近球间距（外侧排）"
+    },
+    {
+      "symbol": "eS2",
+      "requirement": "0.40 BSC",
+      "kind": "diag_max",
+      "nominal": 0.4,
+      "tol": 0.005,
+      "note": "斜向最近球间距（中间排），图纸取整"
+    },
+    {
+      "symbol": "SD",
+      "requirement": "0.21 BSC",
+      "kind": "sd",
+      "nominal": 0.21,
+      "note": "外排中心球到基准 B 的 D 向偏移"
+    },
+    {
+      "symbol": "SE",
+      "requirement": "0.00 BSC",
+      "kind": "se",
+      "nominal": 0.0,
+      "note": "球阵列中心到基准 A 的 E 向偏移"
+    },
+    {
+      "symbol": "e (QFN/QFP)",
+      "requirement": "0.50",
+      "kind": "lead_pitch",
+      "nominal": 0.5,
+      "note": "引脚间距 —— 仅 peripheral 家族可用"
+    },
+    {
+      "symbol": "N (QFN/QFP)",
+      "requirement": "32",
+      "kind": "lead_count",
+      "nominal": 32,
+      "note": "引脚总数（不含散热焊盘）"
+    },
+    {
+      "symbol": "b",
+      "requirement": "0.25",
+      "kind": "lead_width",
+      "nominal": 0.25,
+      "note": "引脚宽度"
+    },
+    {
+      "symbol": "L",
+      "requirement": "0.875",
+      "kind": "lead_length",
+      "nominal": 0.875,
+      "note": "引脚长度"
+    },
+    {
+      "symbol": "D2/E2",
+      "requirement": "3.10",
+      "kind": "ep_x",
+      "nominal": 3.1,
+      "note": "散热焊盘宽度"
+    },
+    {
+      "symbol": "e (chip)",
+      "requirement": "1.65",
+      "kind": "pad_span",
+      "nominal": 1.65,
+      "note": "两端子跨距 —— 仅 chip 家族可用"
+    }
+  ],
+  "notes": [
+    "family 决定用哪个家族的测量/画图：grid_array = WLCSP/BGA/LGA，peripheral = QFN/QFP/SOIC/SOT-23，chip = 0402/0603/SOD-123。",
+    "不需要的行直接删掉：家族不支持的 kind 会返回 None 并显示「待测」，不会误判。",
+    "实测数据来源：Gerber / 钻孔文件反解析，非图纸抄录。",
+    "【判定标准】BSC/标称尺寸 |Δ| ≤ tolerance；Øb 落在 MIN~MAX；计数项完全一致。"
+  ],
+  "legend": {
+    "sheet": "图例说明",
+    "head": "「实际测量:图片」是什么、怎么画出来的",
+    "intro": "这些图不是图纸截图，而是用本工程实际生成的制造数据（Gerber / 钻孔文件）现场重画的测量图：脚本先反解析 Gerber 得到每个焊盘的真实坐标和光圈直径，再用这些真实坐标绘图并标注该行要考核的尺寸。图上的数值 = 从真实数据量出来的值。",
+    "tables": [
+      {
+        "title": "一、图元图例（所有图通用）",
+        "rows": [
+          [
+            "图元",
+            "含义",
+            "数据来源"
+          ],
+          [
+            "灰色实心圆",
+            "实际焊盘（位置 + 大小）",
+            "铜层 Gerber 的 D03 闪点坐标 + 光圈直径"
+          ],
+          [
+            "蓝色实线矩形",
+            "封装本体外框",
+            "丝印层中本体框线实测"
+          ],
+          [
+            "蓝色虚线",
+            "基准线（基准 B = 本体中心线 X，基准 A = 本体中心线 Y）",
+            "按图纸对基准的定义叠加在实测数据上"
+          ],
+          [
+            "蓝色细直线束",
+            "矩阵网格位（列位 / 行位）",
+            "对焊盘坐标去重得到"
+          ],
+          [
+            "红色尺寸线 + 两端界线",
+            "该项真实测量尺寸",
+            "由实测坐标直接算出"
+          ],
+          [
+            "红圈高亮",
+            "该尺寸涉及的那一排/那颗球",
+            "便于看清量的是哪里"
+          ],
+          [
+            "红色斜线 + 两端圆点",
+            "斜向中心距",
+            "球心到球心"
+          ],
+          [
+            "白底红字标签",
+            "实测数值",
+            "脚本实测值"
+          ],
+          [
+            "灰色小球侧视图",
+            "仅 Z 向项目用：示意，不是测量值",
+            "2D 文件无该方向几何"
+          ]
+        ]
+      },
+      {
+        "title": "二、每行图片的画法",
+        "rows": [
+          [
+            "D / E",
+            "画本体外框 + 全部焊盘，框外一条红色尺寸线"
+          ],
+          [
+            "D1 / E1",
+            "取最左/最右、最上/最下球心画尺寸线"
+          ],
+          [
+            "MD / ME",
+            "把矩阵的每个列位/行位用蓝色细线全部标出"
+          ],
+          [
+            "N",
+            "逐个闪点计数并标注数量"
+          ],
+          [
+            "Øb",
+            "放大到单个焊盘，红圈描轮廓 + 盘内直径尺寸线"
+          ],
+          [
+            "eD",
+            "放大到同排相邻两个焊盘，量球心距"
+          ],
+          [
+            "eE*s",
+            "红圈高亮起始排，垂直尺寸线量到目标排"
+          ],
+          [
+            "eS1 / eS2",
+            "放大到相邻两排最近的一对球，斜线连两球心"
+          ],
+          [
+            "SD / SE",
+            "画出基准虚线，量中心球 / 阵列中心到基准的偏移"
+          ]
+        ]
+      }
+    ]
+  },
+  "family": "REPLACE: grid_array | peripheral | chip  (留空则自动判别)"
+}

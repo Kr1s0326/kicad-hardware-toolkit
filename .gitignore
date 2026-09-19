@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 集成测试产物：由 build_testboards.py 现场生成，不入库
+skills/kicad-check-pcb-component/scripts/_testdata/
+*.kicad_prl
+*.kicad_prf
+
+# 本地跑出来的校验产物
+_verify/
+chk/
+chk2/
+out/

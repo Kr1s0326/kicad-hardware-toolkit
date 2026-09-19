@@ -1,0 +1,76 @@
+# 符号 house style 细则
+
+手册**不规定**引脚的摆放。手册只给"pin 8 = VBUS，Analog input"。
+间距、分组、朝向、本体大小全是内部规范 —— 所以这部分错了，手册比对是查不出来的。
+
+## 1. 间距
+
+| 项 | 默认 | 说明 |
+|---|---|---|
+| 组内间距 `pitch_mil` | 200 | 同一功能组内相邻引脚 |
+| 组间间距 `group_gap_mil` | 400 | 不同功能组之间 |
+
+都用 mil。列在 `symbol_style` 里。
+
+## 2. 分组是**语义**信息，必须人给
+
+工具没法从坐标推出"VBUS 和 IN+ 不是同一种功能"。
+
+而且这条规则**几何上不可判**：左侧原本
+
+```
+VBUS(12.7)  ─400mil─  IN+(2.54)  ─200mil─  IN−(−2.54)
+```
+
+把 `IN+` 提到 7.62 就变成
+
+```
+VBUS(12.7)  ─200mil─  IN+(7.62)  ─400mil─  IN−(−2.54)
+```
+
+两种分组**都满足**"组内 200 / 组间 400"。所以 `groups{}` 是**输入**，
+生成器只负责把它翻译成坐标；校验侧也拿它当输入，并额外把
+"几何推断的分组"和"声明的分组"对账。
+
+## 3. 组内顺序 = pins[] 的书写顺序
+
+想要右侧 `MOSI / MISO / SCLK / CS`，就在 `pins[]` 里按这个顺序写这四行。
+组的先后由 `groups.right` 的数组顺序决定。
+
+## 4. 每边对齐：默认顶对齐
+
+```
+side_align: "top"     # 每边第一个引脚 y 相同（默认）
+side_align: "center"  # 每边各自上下居中
+```
+
+**顶对齐是 KiCad 官方库的惯例。** 证据：官方 `Sensor_Energy:INA226` 的
+左侧 `Vbus=7.62, Vin+=−2.54, Vin−=−5.08`，右侧 `A1=7.62`（最高），
+`Vbus` 和 `A1` 都在 7.62 —— 两侧从同一条水平线往下排。
+
+顶对齐还有个实际好处：左右两侧的第一个引脚在同一水平线上，跨侧读数容易。
+
+## 5. 本体大小
+
+由**跨度最大的一侧**决定：
+
+```
+by_top    = Y_top + top_margin_mil
+by_bottom = Y_top − max(span_side) − top_margin_mil
+```
+
+`body_half_width_mil` 是手工给的（默认 300 mil = 7.62 mm，总宽 15.24 mm）。
+给多少要看最长的那一对引脚名会不会撞上 —— 校验侧的 `symbol_lint.py`
+有 `overflow` 估算（按 0.85×字号/字符），但**以渲染图为准**。
+
+## 6. 引脚电气类型
+
+| 手册 TYPE 列 | 描述里有 open-drain / open collector | KiCad etype |
+|---|---|---|
+| Digital input / Analog input / Input | | `input` |
+| Digital output / Analog output / Output | 是 | `open_collector` |
+| Digital output / Analog output / Output | 否 | `output` |
+| Power supply / Ground | | `power_in` |
+
+**类型错了画出来一模一样**，间距、栅格、本体全对。只有 ERC 会说话 ——
+所以校验侧一定要跑 `sch_erc.py` 提取 KiCad 认定的类型再和手册比。

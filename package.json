@@ -1,0 +1,21 @@
+{
+  "name": "kicad-hardware-toolkit",
+  "version": "1.0.0",
+  "description": "Create and verify KiCad library parts from a datasheet: an EDA part generator (schematic symbol + PCB footprint) and two independent verification skills (symbol, footprint) with Gerber metrology, DRC, 3D fit, ERC and rendered-PNG eyeball review.",
+  "keywords": [
+    "pi-package",
+    "kicad",
+    "eda",
+    "schematic-symbol",
+    "pcb-footprint",
+    "datasheet",
+    "gerber",
+    "erc",
+    "drc",
+    "hardware"
+  ],
+  "license": "MIT",
+  "pi": {
+    "skills": ["./skills"]
+  }
+}

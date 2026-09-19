@@ -1,0 +1,9 @@
+# Python 依赖（全部是纯 Python 或已有轮子，pip install -r requirements.txt 即可）
+pdfplumber>=0.10    # 从数据手册 PDF 抽引脚表
+openpyxl>=3.1       # 尺寸测量表 xlsx 输出
+Pillow>=10.0        # 渲染图拼接（contact sheet）
+
+# 外部工具（不在 pip 里）：
+#   kicad-cli   随 KiCad 安装，用于导出 Gerber/网表、跑 DRC/ERC、3D 渲染
+#   chrome/edge 无头模式，用于 SVG -> PNG（渲染目视那一步）
+#   两者路径可用环境变量覆盖：KICAD_CLI=...  CHROME=...
