@@ -27,7 +27,7 @@ skills/kicad-check-sch-component/
 ├── pinmap.py             E：引脚↔焊盘编号契约
 ├── kitext.py             KiCad 文本渲染常数（与 make_part.py 共用）
 ├── cli.py / toolchain.py 统一异常包装、找 kicad-cli
-└── render-and-look.md    出图命令 + 踩过的坑 + 看图清单
+└── render-and-look.md    出图命令 + 已知陷阱 + 看图清单
 ```
 
 > **常见踩坑：** `render.py` / `pinmap.py` 不在本 skill 的 `scripts/` 里。
@@ -57,10 +57,8 @@ python scripts/selftest.py        # 41 项，纯标准库
 
 `toolchain.py`（找 kicad-cli/chrome）、`cli.py`（统一错误处理）、
 `render.py`、`pinmap.py`、`kitext.py`、`render-and-look.md` 都在
-**`<toolkit>/shared/`**，只有一份。skill 通过 `../../shared/` 引用
-（脚本里由 `SHARED` 常量解析）。
-
-**改一处就够，不存在漂移。**
+**`<toolkit>/shared/`**，只有一份。skill 通过 `../../shared/` 引用 （脚本里由
+`SHARED` 常量解析）。改一处就够，不存在漂移。
 
 > `kitext.py` 装的是 KiCad 文本渲染常数（字符宽 / 名字离边距离 / 竖排半宽）。
 > 生成侧 `make_part.py` 用它算本体得多宽，本 skill 的 `symbol_lint` 用它反推

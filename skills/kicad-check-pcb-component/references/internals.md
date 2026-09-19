@@ -66,10 +66,8 @@ python scripts/build_testboards.py --run      # 真实 QFN/QFP/SOT-23/SOIC-8/060
 
 `toolchain.py`（找 kicad-cli/chrome）、`cli.py`（统一错误处理）、
 `render.py`、`pinmap.py`、`kitext.py`、`render-and-look.md` 都在
-**`<toolkit>/shared/`**，只有一份。skill 通过 `../../shared/` 引用
-（脚本里由 `SHARED` 常量解析）。
-
-**改一处就够，不存在漂移。**
+**`<toolkit>/shared/`**，只有一份。skill 通过 `../../shared/` 引用 （脚本里由
+`SHARED` 常量解析）。改一处就够，不存在漂移。
 
 > `kitext.py` 装的是 KiCad 文本渲染常数（字符宽 / 名字离边距离 / 竖排半宽）。
 > 生成侧 `make_part.py` 用它算本体得多宽，校验侧 `symbol_lint.py` 用它反推
@@ -78,11 +76,9 @@ python scripts/build_testboards.py --run      # 真实 QFN/QFP/SOT-23/SOIC-8/060
 
 ## 本地验证时的一个坑：`__pycache__`
 
-做"改坏一处、看测试会不会红"这种反向验证时，如果改动是**等长替换**
-（例如把 `dim_h` 和 `dim_v` 对调），文件大小不变；一旦 mtime 落在同一时间
-刻度上，Python 会**复用旧字节码** —— 你会看到"改了却没生效"，很容易误判成
-"测试没用"。
-
+做"改坏一处、看测试会不会红"这种反向验证时，如果改动是**等长替换** （例如把
+`dim_h` 和 `dim_v` 对调），文件大小不变；一旦 mtime 落在同一时间 刻度上，
+Python 会**复用旧字节码** —— 你会看到"改了却没生效"，很容易误判成 "测试没用"。
 本仓库已经因此误判过一次。本地做反向验证前先清：
 
 ```bash
@@ -91,9 +87,7 @@ find . -name __pycache__ -type d -exec rm -rf {} +
 
 CI 每次都是全新 checkout，不受影响。
 
-## 文件名里的两个坑（Windows）
-
-给逐行 `req_image` 起名时，**不要只用符号名**。
+## 文件名里的两个坑（Windows）给逐行 `req_image` 起名时，**不要只用符号名**。
 
 ### 大小写不敏感
 
@@ -104,9 +98,9 @@ ref_D.png   ref_E.png   ref_D2.png   ref_E2.png   ref_e.png   ref_b.png   ref_L.
                               └─────────── 这两个是同一个文件 ───────────┘
 ```
 
-后写的那张会把先写的**静默覆盖**。真实后果：ESP32-S3 的尺寸表里
-"E 本体高" 那一行的「要求:图片」显示成了手册的 "e 0.400 BSC" 行 ——
-两个不同的尺寸项张冠李戴，而所有数值和判定都是对的，只有图错了。
+后写的那张会把先写的**静默覆盖**。真实后果：ESP32-S3 的尺寸表里 "E 本体高"
+那一行的「要求:图片」显示成了手册的 "e 0.400 BSC" 行 ——
+两个不同的尺寸项配错了图，而所有数值与判定都是对的。
 
 **用行序号前缀**：`req_%02d_%s.png`（`req_02_E.png` / `req_03_e.png`）。
 这也正是 `measure_component.py` 归一化时用的命名，天然不会撞。
@@ -114,5 +108,5 @@ ref_D.png   ref_E.png   ref_D2.png   ref_E2.png   ref_e.png   ref_b.png   ref_L.
 ### 逐张读回校验会掩盖覆盖
 
 循环里每写一张就立刻读回来对 md5，**当时那一刻是对的** ——
-覆盖发生在后面那一次写入。所以要么最后统一校验一遍（并断言
-**所有文件的 md5 互不相同**），要么直接把 md5 集合去重后比大小。
+覆盖发生在后面那一次写入。所以要么最后统一校验一遍（并断言 **所有文件的 md5
+互不相同**），要么直接把 md5 集合去重后比大小。

@@ -132,10 +132,8 @@ SOT-23 与 QFN/QFP 同属 `peripheral`（都是边引脚），代码共用一份
 
 ## 6. 常见坑（都已在代码里处理，改代码时别破坏）
 
-* **圆角矩形焊盘**：KiCad 用光圈宏 `%AMRoundRect` 画，光圈尺寸不等于焊盘尺寸，
-  真实尺寸 = 四角方框 + 2×圆角半径（见 `core/gerber.py: aperture_size`）。
-* **散热焊盘上的过孔阵列**：KiCad 的 QFN 封装在散热盘上放了 3×3 无编号焊盘，
-  必须丢掉，否则会被判成"网格阵列"（见 `core/gerber.py: filter_pads`）。
+* **圆角矩形焊盘**：KiCad 用光圈宏 `%AMRoundRect` 画，光圈尺寸不等于焊盘尺寸，真实尺寸 = 四角方框 + 2×圆角半径（见 `core/gerber.py: aperture_size`）。
+* **散热焊盘上的过孔阵列**：KiCad 的 QFN 封装在散热盘上放了 3×3 无编号焊盘，必须丢掉，否则会被判成"网格阵列"（见 `core/gerber.py: filter_pads`）。
 * **边引脚的"哪一边"**：必须按**最近边**判定，用"四分之一带宽"会把 QFP 的
   上下排引脚判到左右边去（见 `core/geometry.py: classify_pads`）。
 * **本体外框**：丝印/装配层上还有元件位号、数值文字，字号大时笔画可能和小封装
@@ -143,5 +141,4 @@ SOT-23 与 QFN/QFP 同属 `peripheral`（都是边引脚），代码共用一份
   两条竖线），找不到才退化成"长线段包围盒"（见 `core/spec.py: body_rect`）。
 * **多段圆弧组成的圆**：钢网定位孔是"实心圆"用圆光圈描边画出来的，要按
   `路径半径 + 光圈/2` 还原真实直径（见 `core/gerber.py: stroked_circles`）。
-* **镜像**：图纸多是 bottom view，封装是 top view。跨距/间距/计数与镜像无关，
-  但阵列不对称（如 A1 空球）时要在报告里注明假设的朝向。
+* **镜像**：图纸多是 bottom view，封装是 top view。跨距/间距/计数与镜像无关，但阵列不对称（如 A1 空球）时要在报告里注明假设的朝向。

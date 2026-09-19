@@ -1,12 +1,10 @@
 ---
 name: kicad-check-sch-component
-description: Verifies a KiCad schematic symbol against its datasheet: house-style lint on the geometry (pitch, functional grouping, grid alignment, body fit, corner text overlap), the netlist KiCad exports after parsing the symbol, ERC for the electrical types KiCad actually inferred, a rendered PNG to eyeball, and a pin-number <-> footprint-pad contract check. Reports a three-way table (datasheet pin table vs netlist names vs ERC types) with PASS / NG plus an Excel pin sheet. Use when asked to check, verify, lint or review a schematic symbol / 原理图符号 / .kicad_sym, to confirm the pins match the datasheet, to enforce symbol drawing rules (200 mil within a functional group, 400 mil between groups), or to find pins that are off-grid, mis-typed, duplicated or overlapping.
+description: Verifies a KiCad schematic symbol against its datasheet. Checks house-style lint on the geometry (pitch, functional grouping, grid alignment, body fit, corner text overlap), the netlist KiCad exports after parsing the symbol, ERC for the electrical types KiCad actually inferred, a rendered PNG to eyeball, and a pin-number <-> footprint-pad contract check. Reports a three-way table (datasheet pin table vs netlist names vs ERC types) with PASS / NG plus an Excel pin sheet. Use when asked to check, verify, lint or review a schematic symbol / 原理图符号 / .kicad_sym, to confirm the pins match the datasheet, to enforce symbol drawing rules (200 mil within a functional group, 400 mil between groups), or to find pins that are off-grid, mis-typed, duplicated or overlapping.
 license: MIT
 ---
 
-# 原理图符号校验（KiCad）
-
-把 *"这是数据手册的引脚表 + 这是我画的符号"* 变成一份自证的证据包。
+# 原理图符号校验（KiCad）把 *"这是数据手册的引脚表 + 这是我画的符号"* 变成一份自证的证据包。
 
 ```bash
 python scripts/check_symbol.py <lib.kicad_sym> --outdir out \
@@ -19,7 +17,7 @@ python scripts/check_symbol.py <lib.kicad_sym> --outdir out \
 
 ```
 out/
-├── EVIDENCE.md      逐项结论 + 每条的数据来源 + 必须人看的图
+├── EVIDENCE.md      逐项结论 + 每条的数据来源 + 须实际查看的图
 ├── look_sheet.png   ★ 符号渲染图
 ├── lint.txt         规矩检查明细（各边间距 / 分组）
 ├── INA239.kicad_sch 自动搭的最小原理图（下面 B/C 两条通路都用它）
@@ -29,87 +27,71 @@ out/
 └── sym/*.png        ★ 渲染图
 ```
 
-## 为什么必须是四条通路（外加一条跨件的契约）
-
-**电气类型画出来完全一样。** 把 `MISO` 标成 `input`，渲染图、间距、栅格、
-本体大小全都正常 —— 只有 ERC 会说。反过来，"组间 400 mil" 这种规矩
-ERC 和网表都看不见。**没有任何一条通路能替代另一条。**
+## 四条独立通路（外加一条跨件的契约）电气类型画出来完全一样。把 `MISO` 标成 `input`，渲染图、间距、栅格、本体大小全都正常 —— 只有 ERC 会说。反过来，"组间 400 mil" 这种规矩
+ERC 和网表都看不见。没有任何一条通路能替代另一条。
 
 A~D 四条各自看符号的一个侧面；E 不是第四条，它是**跟另一件产物（封装）
-交叉**才能做的一条，符号单独看无从判起。
-
-**要求一侧可以只给名字。** 很多 MCU 手册的引脚表只有球号 + 信号名，
-压根没有 TYPE 列（Infineon PSoC 62 的 Table 7 就是这样）。这时
-"电气类型"既不算 PASS 也不算 NG **而是“类型未声明”** —— 那是"要求一侧
-根本不存在"，不是"符号错了"。
-
-踩过的坑：以前直接拿 `None` 去比 ERC 推导出的类型，于是**每个引脚都报 NG**，
-汇总变成"49/49 不一致"，而名字其实 49 个全对。**假 NG 比不查更糟**：
-看报告的人会以为符号错了。现在 xlsx 里是第三种判定（黄色），汇总单独计数。
+交叉**才能做的一条，符号单独看无从判起。要求一侧可以只给名字。很多 MCU
+手册的引脚表只有球号 + 信号名，压根没有 TYPE 列（Infineon PSoC 62 的 Table 7
+就是这样）。这时 "电气类型"既不算 PASS 也不算 NG **而是“类型未声明”** ——
+那是"要求一侧 根本不存在"，不是"符号错了"。此前直接拿 `None` 去比 ERC
+推导出的类型，导致**每个引脚都报 NG**，汇总变成"49/49 不一致"，而 49
+个名字全部匹配。假 NG 比不查更糟：看报告的人会以为符号错了。现在 xlsx
+里是第三种判定（黄色），汇总单独计数。
 
 | 通路 | 手段 | 抓什么 | 抓不到 |
 |---|---|---|---|
 | **A 规矩** | 纯几何解析 | 间距 / 分组 / 栅格 / 本体 / **四角文字交叠** | 引脚名、电气类型 |
 | **B 网表** | `sch export netlist` | 引脚号/名的结构错（KiCad 读不出） | 位置、电气类型 |
 | **C ERC** | `sch erc` | **电气类型**、跨引脚电气冲突 | 位置、名字 |
-| **D 目视** | 渲染 → PNG | 分组观感、压字、本体比例 | 需要人 |
+| **D 目视** | 渲染 → PNG | 分组观感、压字、本体比例 | 必须实际看图；不看图不得下结论 |
 
 外加一条跨 artifact 的：
 
 | **E 契约** | 解析引脚编号集 ∩ 封装焊盘编号集 | 引脚号 ↔ 焊盘号 对不上 | 名字、电气类型 |
 
-**铁律：没看过图，不许说"已验证"。** 清单见
+铁律：没看过图，不许说"已验证"。清单见
 [../../shared/render-and-look.md](../../shared/render-and-look.md)。
 
-### 四角文字交叠（`overflow`）
-
-四边封装里，上/下排的引脚名是**竖着**写的、左/右排的是**横着**写的，
-两者在四个角抢同一块地方。判据：
+### 四角文字交叠（`overflow`）四边封装里，上/下排的引脚名是**竖着**写的、左/右排的是**横着**写的，两者在四个角抢同一块地方。判据：
 
 ```
 左侧名字的右端  <  最左那个上/下排名字的左端
 ```
 
 **名字不是贴边画的** —— KiCad 把它画在本体内侧 `NAME_OFF = 0.85mm` 处。
-漏掉这个偏移，估出的名字就短 0.67mm，明明压着字却报"无疑问项"。
-常数放在 [`shared/kitext.py`](../../shared/kitext.py)，**与生成侧
-`make_part.py` 共用同一组** —— 各写一份迟早漂移，然后检查静默失效。
-
-这条只进 `warnings`（咨询项）：它不影响电气，但影响可读性 ——
-渲染图上 XRES 被 VDDD 盖掉一个字符时，ERC 和网表都是全绿的。
+漏掉这个偏移，估出的名字就短 0.67mm，明明压着字却报"无疑问项"。常数放在
+[`shared/kitext.py`](../../shared/kitext.py)，**与生成侧 `make_part.py`
+共用同一组** —— 各写一份迟早漂移，然后检查静默失效。这条只进
+`warnings`（咨询项）：它不影响电气，但影响可读性 —— 渲染图上 XRES 被 VDDD
+盖掉一个字符时，ERC 和网表都是全绿的。
 
 ---
 
 ## 最重要的一条限制：分组是**输入**
 
-> **「组间 400 mil」这条规则几何上不可判。**
-
-实测：左侧原本 `VBUS(12.7) ─400mil─ IN+(2.54) ─200mil─ IN−(−2.54)`，
-把 `IN+` 提到 7.62 就变成 `VBUS(12.7) ─200mil─ IN+(7.62) ─400mil─ IN−(−2.54)`
-—— 间距变成了 200/400，**两种分组都满足"组内 200 / 组间 400"**。
-光看坐标，工具分不清"合规的另一个分组"和"你搭错了"。
-
-所以必须用 `--groups` 把语义分组告诉工具（模板见
+> 「组间 400 mil」这条规则几何上不可判。实测：左侧原本 `VBUS(12.7) ─400mil─ IN+(2.54) ─200mil─ IN−(−2.54)`，把 `IN+` 提到 7.62 就变成 `VBUS(12.7) ─200mil─ IN+(7.62) ─400mil─ IN−(−2.54)`
+—— 间距变成了 200/400，**两种分组都满足"组内 200 / 组间 400"**。光看坐标，
+工具分不清"合规的另一个分组"和"你搭错了"。所以必须用 `--groups`
+把语义分组告诉工具（模板见
 [assets/groups_template.json](assets/groups_template.json)）。
-不给的话工具会明确打印"该规则无法真正校验"，而不是假装通过。
-
-给了分组之后，工具会额外做一件事：**把几何推断出的分组和声明的分组对账**，
-不一致直接 FAIL。这条对账才是"我以为的分组"和"画出来的分组"真正对上。
+不给的话工具会明确打印"该规则无法真正校验"，而不是假装通过。给了分组之后，
+工具会额外做一件事：**把几何推断出的分组和声明的分组对账**，不一致直接 FAIL。
+这条对账才是"我以为的分组"和"画出来的分组"真正对上。
 
 ---
 
 ## 内部结构不在这里
 
 目录树、"出问题先看哪"、共享代码说明都在
-**[references/internals.md](references/internals.md)** —— 那些是**改这套代码时**
-才需要的。拿它校验符号不用读。
-
-用得到的就一句：**`render.py` / `pinmap.py` 在 `<toolkit>/shared/`，不在
-本 skill 的 `scripts/` 下**（从本目录用 `../../shared/`）。
+**[references/internals.md](references/internals.md)** ——
+那些是**改这套代码时** 才需要的。拿它校验符号不用读。用得到的就一句：
+`render.py` / `pinmap.py` 在 `<toolkit>/shared/`，不在 本 skill 的 `scripts/`
+下（从本目录用 `../../shared/`）。
 
 ## 工作流
 
-1. **先填分组 —— 由 AI/LLM 判。** 拿 `assets/groups_template.json`，按手册的
+1. 先填分组 —— 由 AI/LLM 判。拿 `assets/groups_template.json`，按手册的
    引脚功能（引脚名、电源域、复用功能表）把每个引脚的分组写清楚。
    这一步工具做不了，也正是"组间 400 mil"能被校验的前提。
 2. **跑。**
@@ -126,7 +108,7 @@ A~D 四条各自看符号的一个侧面；E 不是第四条，它是**跟另一
 ## 各项命令单独用
 
 全部从本 skill 目录（`<toolkit>/skills/kicad-check-sch-component/`）跑。
-**后两行在 `shared/` 下，不在 `scripts/` 里**，所以要写 `../../shared/`。
+后两行在 `shared/` 下，不在 `scripts/` 里，所以要写 `../../shared/`。
 
 ```bash
 python scripts/symbol_lint.py lib.kicad_sym [--groups g.json]
@@ -156,4 +138,4 @@ python ../../shared/render.py sym lib.kicad_sym outdir
 | `kicad-create-lib-part` | 只负责**生成** `.kicad_sym` / `.kicad_mod`，只保证"能被 KiCad 加载"。不看图、不做正确性判断、不读手册做比对。 |
 | `kicad-check-pcb-component` | 校验 PCB 封装。引脚↔焊盘契约由两边共同成立。 |
 
-**创建保证"可加载"，校验保证"正确"。** 别把这两件事混进一个 skill。
+创建保证"可加载"，校验保证"正确"。别把这两件事混进一个 skill。

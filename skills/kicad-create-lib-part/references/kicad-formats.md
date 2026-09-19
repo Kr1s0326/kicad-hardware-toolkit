@@ -13,8 +13,8 @@ python scripts/kicad_io.py probe
 另有 `generator_version` 键，但 `probe` 子命令**不打印它** —— 文档这里曾经写成
 会打印，别被误导。）
 
-`probe_formats()` 去读**本机官方库文件**的 `(version …)` token，不靠记忆。
-换 KiCad 版本后重跑一次就行。
+`probe_formats()` 去读**本机官方库文件**的 `(version …)` token，不靠记忆。换
+KiCad 版本后重跑一次就行。
 
 ## 加载失败 ≠ 非零返回码
 
@@ -24,9 +24,8 @@ kicad-cli sym upgrade bad.kicad_sym    # rc=2  无法加载库
 ```
 
 `kicad_io.loadable()` 同时看 rc 和消息文本。**只看 rc 不够**，也不够健壮。
-
-顺带一个真实教训：`cmd | head -1; echo $?` 里的 `$?` 是 `head` 的返回值，
-不是 `cmd` 的。加管道要 `PIPESTATUS`。
+顺带一个真实教训：`cmd | head -1; echo $?` 里的 `$?` 是 `head` 的返回值，不是
+`cmd` 的。加管道要 `PIPESTATUS`。
 
 ## 符号库结构
 
@@ -45,11 +44,10 @@ kicad-cli sym upgrade bad.kicad_sym    # rc=2  无法加载库
 )
 ```
 
-**引脚必须放在子块 `NAME_1_1` 里面。** 放进父块里 KiCad 不会报错，
-但网表里会少引脚 —— 这是 `sch_netlist.py` 能抓到、纯文本检查抓不到的错。
-
-拷进原理图时（`sch_build.py`）：父符号带上库前缀 `LIB:NAME`，
-**子块保持裸名** `NAME_0_1`。和 KiCad 自己写出来的一致。
+引脚必须放在子块 `NAME_1_1` 里面。放进父块里 KiCad 不会报错，但网表里会少引脚
+—— 这是 `sch_netlist.py` 能抓到、纯文本检查抓不到的错。
+拷进原理图时（`sch_build.py`）：父符号带上库前缀 `LIB:NAME`， **子块保持裸名**
+`NAME_0_1`。和 KiCad 自己写出来的一致。
 
 ## 封装结构
 
@@ -57,7 +55,7 @@ kicad-cli sym upgrade bad.kicad_sym    # rc=2  无法加载库
 (footprint "NAME"
   (version …) (generator "kicad-footprint-generator")
   (layer "F.Cu") (descr "…") (tags "…")
-  (property "Reference" "REF**" (at 0 -2.45 0) (layer "F.SilkS") …)
+  (property "Reference" "REF" (at 0 -2.45 0) (layer "F.SilkS") …)
   (property "Value" … (layer "F.Fab") …)
   (attr smd)
   (duplicate_pad_numbers_are_jumpers no)
@@ -78,19 +76,19 @@ kicad-cli sym upgrade bad.kicad_sym    # rc=2  无法加载库
 \t(generator_version …) \t(embedded_fonts no)
 ```
 
-删掉，再补上 `(at x y)` + `(uuid …)`。见 `kicad-check-pcb-component/scripts/core/board.py`。
+删掉，再补上 `(at x y)` + `(uuid …)`。见
+`kicad-check-pcb-component/scripts/core/board.py`。
 
 ## 要板子才能做的事
 
-`kicad-cli` 对 `.kicad_mod` **只能导 SVG**。Gerber 导出、DRC、3D 渲染都要求
+`kicad-cli` 对 `.kicad_mod` 只能导 SVG。Gerber 导出、DRC、3D 渲染都要求
 `.kicad_pcb`。所以校验封装必须先内联成一块最小板子。
 
 ## 原理图里放符号的栅格
 
-放符号的位置**必须落在连接栅格上**（默认 1.27 mm = 50 mil）。
-放在 `(100, 100)` 时 100/1.27 = 78.74，不在栅格上，ERC 会对**每个引脚**报
-`endpoint_off_grid` —— 那是尺子的问题，不是符号的问题。`sch_build.py`
-现在会自动吸附到 1.27 mm。
+放符号的位置必须落在连接栅格上（默认 1.27 mm = 50 mil）。放在 `(100, 100)` 时
+100/1.27 = 78.74，不在栅格上，ERC 会对每个引脚**报 `endpoint_off_grid` ——
+那是尺子的问题，不是符号的问题。`sch_build.py` 现在会自动吸附到 1.27 mm。
 
 ## Windows 控制台与字符
 

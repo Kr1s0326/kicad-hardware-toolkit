@@ -61,8 +61,10 @@ jobs:
       # pi 自己宽容，但别的 harness 不宽容 —— 这里卡住。
       - name: validate SKILL.md
         run: |
+          pip install --quiet pyyaml
           python - <<'PY'
           import pathlib, re, sys
+          import yaml
           bad = 0
           for d in sorted(pathlib.Path("skills").iterdir()):
               f = d / "SKILL.md"
@@ -85,6 +87,15 @@ jobs:
                   print("::error::%s 缺 description" % f); bad += 1
               elif len(de.group(1)) > 1024:
                   print("::error::%s description 超过 1024 字符" % f); bad += 1
+              # 正则只能查长度和形状。description 里一个裸 ": " 就会让 YAML
+              # 解析失败（别的 harness 真要按 YAML 读），而这里一条都看不到。
+              # 实测中过：把 "datasheet: house-style lint" 写进 description。
+              try:
+                  y = yaml.safe_load(fm)
+                  if not isinstance(y, dict) or "description" not in y:
+                      raise ValueError("frontmatter 不是含 description 的映射")
+              except Exception as e:
+                  print("::error::%s frontmatter 不是合法 YAML: %s" % (f, e)); bad += 1
               print("ok   %s (%s)" % (d.name, name))
           sys.exit(1 if bad else 0)
           PY
