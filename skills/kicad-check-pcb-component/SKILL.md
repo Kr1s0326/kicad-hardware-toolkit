@@ -111,7 +111,8 @@ python scripts/build_testboards.py --run      # 真实 QFN/QFP/SOT-23/SOIC-8/060
 2. **定位制造数据。** 有 `gerber/` 就直接用；只有 `.kicad_pcb` / `.kicad_mod` 就跑
    `check_footprint.py`（它会自己建板、导出 Gerber 和钻孔）。
 3. **写 spec.json。** 一行一个检查项，`kind` 见
-   [references/families.md](references/families.md)。
+   [references/families.md](references/families.md)；
+   完整例子见 [assets/spec_template.json](assets/spec_template.json)。
 4. **跑。**
    ```bash
    python scripts/check_footprint.py fp.kicad_mod --outdir out --spec a.spec.json
@@ -177,7 +178,7 @@ python scripts/build_testboards.py --run      # 真实 QFN/QFP/SOT-23/SOIC-8/060
 
 ## 共享代码
 
-`render.py`、`pinmap.py`、`render-and-look.md` 放在 **`<toolkit>/shared/`**，
-只有一份。skill 通过 `../../shared/` 引用（脚本里由 `SHARED` 常量解析）。
+`toolchain.py`（找 kicad-cli/chrome）、`cli.py`（统一错误处理）、
+`render.py`、`pinmap.py`、`render-and-look.md` 都在 **`<toolkit>/shared/`**，只有一份。skill 通过 `../../shared/` 引用（脚本里由 `SHARED` 常量解析）。
 
 **改一处就够，不存在漂移。**

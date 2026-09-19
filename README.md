@@ -136,7 +136,10 @@ python $TK/skills/kicad-check-pcb-component/scripts/check_footprint.py \
 kicad-hardware-toolkit/
 ├── package.json                    pi 包清单
 ├── requirements.txt
+├── .github/workflows/test.yml      CI：3 个 selftest + pyflakes + frontmatter 校验
 ├── shared/                         共享代码，只有一份
+│   ├── toolchain.py                外部工具定位（kicad-cli / chrome / KiCad share）
+│   ├── cli.py                      入口统一错误处理 + 退出码
 │   ├── render.py                   渲染：SVG→PNG / 3D
 │   ├── pinmap.py                   引脚↔焊盘 契约
 │   └── render-and-look.md          看图清单与结论措辞规范
@@ -162,11 +165,16 @@ kicad-hardware-toolkit/
 
 ## 自测
 
+三个 selftest 都是**纯标准库、不需要 CAD、秒级**：
+
 ```bash
-cd skills/kicad-check-pcb-component
-python scripts/selftest.py                 # 75 项，不需要 CAD 文件
-python scripts/build_testboards.py --run --3d   # 真实 KiCad 库的集成测试
+python skills/kicad-check-pcb-component/scripts/selftest.py    # 75 项
+python skills/kicad-check-sch-component/scripts/selftest.py    # 22 项
+python skills/kicad-create-lib-part/scripts/selftest.py        # 50 项
+python skills/kicad-check-pcb-component/scripts/build_testboards.py --run --3d  # 真实库集成测试
 ```
+
+CI 每次 push 自动跑这三个 + pyflakes + skill frontmatter 校验。
 
 ## 已知边界（做不到的）
 
@@ -175,8 +183,8 @@ python scripts/build_testboards.py --run --3d   # 真实 KiCad 库的集成测�
   所以 spec 里每个数字旁边都注明来自哪张图的哪个标注。
 * **符号的跨引脚电气冲突**（两个输出短接这类）还没查 —— 现在是"孤立符号 ERC +
   电气类型提取"，要做需要搭测试台原理图。
-* **封装只实测过 dual-row gullwing**（SOIC/TSSOP/VSSOP/MSOP）。四边（QFP/QFN）
-  的代码写了，但没有真实数据回归过。
+* **四边封装（QFP/QFN）已有 selftest 覆盖**，但还没有拿真实厂家的 QFP 图纸
+  （而不只是合成参数）走一遍完整流程。
 * **Z 向尺寸测不了**（2D Gerber 没有该方向几何），一律报"待测"。
 
 ## License

@@ -41,8 +41,6 @@ import argparse
 import glob
 import json
 import os
-import shutil
-import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -52,6 +50,7 @@ SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
 for _p in (HERE, SHARED):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+from cli import guard                             # noqa: E402
 
 try:
     sys.stdout.reconfigure(errors="replace")
@@ -80,6 +79,7 @@ def export_gerbers(pcb, gdir):
     return sorted(glob.glob(os.path.join(gdir, "*")))
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("mod")
@@ -140,10 +140,17 @@ def main():
     import drc as drc_mod
     d = drc_mod.run_drc(pcb, os.path.join(out, "drc.rpt"))
     blocking = [v for v in d["violations"] if not drc_mod.is_benign(v)]
-    for v in d["violations"]:
+    benign = [v for v in d["violations"] if drc_mod.is_benign(v)]
+    for v in blocking:
         print("  [%s] %s: %s" % (v["severity"], v["kind"], v["msg"][:70]))
-    if not d["violations"]:
+        if v["where"]:
+            print("         ", v["where"])
+    if not blocking:
         print("  none - 丝印不压盘 / 外框完整 / 无间距违规")
+    if benign:
+        # 比如"测试板没注册封装库"—— 与封装质量无关，不刷屏
+        print("  (另 %d 项与被测封装无关，已忽略: %s)"
+              % (len(benign), ", ".join(sorted({v["kind"] for v in benign}))))
     ev("DRC", "PASS" if not blocking else "NG", "kicad-cli pcb drc",
        "%d 项相关违规" % len(blocking))
 
@@ -237,4 +244,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

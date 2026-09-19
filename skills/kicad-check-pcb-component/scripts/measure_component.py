@@ -19,8 +19,12 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
+if SHARED not in sys.path:
+    sys.path.insert(0, SHARED)
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+from cli import guard                             # noqa: E402
 
 from core import common                                    # noqa: E402
 from core import report, spec as spec_mod                  # noqa: E402
@@ -46,6 +50,7 @@ def pick_family(ctx, wanted):
                      "set \"family\" in spec.json")
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("spec", nargs="?")
@@ -157,4 +162,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

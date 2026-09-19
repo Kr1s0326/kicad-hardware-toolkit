@@ -34,6 +34,7 @@ SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
 for _p in (HERE, SHARED):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+from cli import guard                             # noqa: E402
 
 try:
     sys.stdout.reconfigure(errors="replace")
@@ -115,6 +116,7 @@ def is_expected(v):
     return v["kind"] in EXPECTED
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("sch")

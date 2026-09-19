@@ -25,6 +25,7 @@ import argparse
 import os
 import re
 import sys
+from cli import guard                             # noqa: E402
 
 # Windows 控制台常是 GBK；输出里若出现 GBK 以外的字符（↔ ✅ 之类）会直接抛
 # UnicodeEncodeError 打断整个检查。这里保留原编码，只把无法映射的字符降级。
@@ -104,6 +105,7 @@ def check_footprint(mod_path):
     return {"pads": pads, "unnumbered": unnum, "problems": problems}
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--footprint")
@@ -151,4 +153,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

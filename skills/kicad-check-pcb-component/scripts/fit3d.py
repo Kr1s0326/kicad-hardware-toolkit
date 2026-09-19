@@ -33,6 +33,7 @@ SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
 for _p in (HERE, SHARED):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+from cli import guard                             # noqa: E402
 
 from core import board as board_mod                            # noqa: E402
 import render                                                  # noqa: E402
@@ -78,6 +79,7 @@ def resolve_model(ref):
     return None
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("mod")
@@ -117,4 +119,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

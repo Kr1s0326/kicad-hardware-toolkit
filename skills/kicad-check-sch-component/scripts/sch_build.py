@@ -29,6 +29,13 @@ import re
 import sys
 import uuid
 
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
+if SHARED not in sys.path:
+    sys.path.insert(0, SHARED)
+from cli import guard                             # noqa: E402
+
 try:
     sys.stdout.reconfigure(errors="replace")
     sys.stderr.reconfigure(errors="replace")
@@ -147,6 +154,7 @@ def build(sym_path, out_sch, sym_name=None, lib_id=None, ref="U1",
             "pins": pin_numbers(blk), "sch": out_sch}
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("lib")
@@ -165,4 +173,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

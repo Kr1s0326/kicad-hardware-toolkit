@@ -33,6 +33,13 @@ import os
 import re
 import sys
 
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
+if SHARED not in sys.path:
+    sys.path.insert(0, SHARED)
+from cli import guard                             # noqa: E402
+
 try:
     sys.stdout.reconfigure(errors="replace")
     sys.stderr.reconfigure(errors="replace")
@@ -104,6 +111,7 @@ def extract(pdf_path, marker="Table 5-1", overrides=None):
                 "source": os.path.basename(pdf_path)}
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("pdf")

@@ -1,0 +1,85 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    name: selftest (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # 三个 selftest 都是纯标准库 —— 不装任何第三方包也能跑。
+      # 这是刻意的：CI 不该因为 pip 网络抖动而红。
+      - name: PCB footprint check — selftest
+        run: python skills/kicad-check-pcb-component/scripts/selftest.py
+
+      - name: Schematic symbol check — selftest
+        run: python skills/kicad-check-sch-component/scripts/selftest.py
+
+      - name: Library part generator — selftest
+        run: python skills/kicad-create-lib-part/scripts/selftest.py
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyflakes
+      # 未用导入 / 未定义名 / 重定义。历史上抓到过"两个同名函数互相覆盖"。
+      - name: pyflakes
+        run: python -m pyflakes $(git ls-files '*.py')
+
+  skill-frontmatter:
+    name: skill frontmatter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Agent Skills 标准要求 name 只能是小写+数字+连字符，且和目录名一致。
+      # pi 自己宽容，但别的 harness 不宽容 —— 这里卡住。
+      - name: validate SKILL.md
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+          bad = 0
+          for d in sorted(pathlib.Path("skills").iterdir()):
+              f = d / "SKILL.md"
+              if not f.exists():
+                  continue
+              t = f.read_text(encoding="utf-8")
+              if not t.startswith("---"):
+                  print("::error::%s 没有 frontmatter" % f); bad += 1; continue
+              fm = t.split("---")[1]
+              m = re.search(r"^name:\s*(\S+)", fm, re.M)
+              de = re.search(r"^description:\s*(.+)$", fm, re.M)
+              if not m:
+                  print("::error::%s 缺 name" % f); bad += 1; continue
+              name = m.group(1)
+              if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name):
+                  print("::error::%s name 不合法: %r" % (f, name)); bad += 1
+              if name != d.name:
+                  print("::error::%s name(%s) != 目录名(%s)" % (f, name, d.name)); bad += 1
+              if not de:
+                  print("::error::%s 缺 description" % f); bad += 1
+              elif len(de.group(1)) > 1024:
+                  print("::error::%s description 超过 1024 字符" % f); bad += 1
+              print("ok   %s (%s)" % (d.name, name))
+          sys.exit(1 if bad else 0)
+          PY

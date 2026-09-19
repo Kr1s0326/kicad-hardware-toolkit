@@ -34,7 +34,6 @@ CLI
 """
 
 import argparse
-import glob
 import json
 import os
 import sys
@@ -46,6 +45,7 @@ SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
 for _p in (HERE, SHARED):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+from cli import guard                             # noqa: E402
 
 try:
     sys.stdout.reconfigure(errors="replace")
@@ -67,6 +67,7 @@ def norm(name):
     return name.replace("~{", "").replace("}", "").replace("\u2013", "-").strip()
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("lib")
@@ -75,8 +76,11 @@ def main():
     ap.add_argument("--pdf")
     ap.add_argument("--pdf-table", default="Table 5-1")
     ap.add_argument("--groups")
-    ap.add_argument("--min-pitch", type=float, default=200.0)
-    ap.add_argument("--group-gap", type=float, default=400.0)
+    # 默认 None：优先用命令行显式给的值，其次用 groups.json 里的 _style，
+    # 最后才回退到 200/400。这样改了创建侧的规范，校验侧自动跟上。
+    ap.add_argument("--min-pitch", type=float, default=None, help="mil，默认取 groups.json 的 _style，否则 200")
+    ap.add_argument("--group-gap", type=float, default=None, help="mil，默认取 groups.json 的 _style，否则 400")
+    ap.add_argument("--grid", type=float, default=50.0, help="mil")
     ap.add_argument("--footprint")
     a = ap.parse_args()
 
@@ -94,10 +98,19 @@ def main():
     step(1, "规矩检查  (通路 A: 纯几何，手册不规定，只能查规范)")
     import symbol_lint as sl
     dec = json.load(open(a.groups, encoding="utf-8")) if a.groups else None
+    # 创建侧会把绘制规范一起写进 groups.json 的 _style 里，这里跟上，
+    # 免得改了 spec 的规范而校验侧还用旧默认值 -> 一堆假 FAIL。
+    style = (dec or {}).get("_style") if isinstance(dec, dict) else None
+    style = style if isinstance(style, dict) else {}
+    min_pitch = a.min_pitch if a.min_pitch is not None else float(style.get("pitch_mil", 200.0))
+    group_gap = a.group_gap if a.group_gap is not None else float(style.get("group_gap_mil", 400.0))
+    if style and a.min_pitch is None and a.group_gap is None:
+        print("  (规范取自 groups.json: 组内 %g mil, 组间 %g mil)"
+              % (min_pitch, group_gap))
     if dec is None:
         print("  [!] 没给 --groups：分组只能几何推断，"
-              "「组间 %g mil」这条规则**无法真正校验**" % a.group_gap)
-    r = sl.lint(lib, a.symbol, a.min_pitch, a.group_gap, 50.0, declared=dec)
+              "「组间 %g mil」这条规则**无法真正校验**" % group_gap)
+    r = sl.lint(lib, a.symbol, min_pitch, group_gap, a.grid, declared=dec)
     lines = ["symbol: %s" % r["symbol"], "body: %s" % (r["body"],), ""]
     for side, g in r["sides"].items():
         lines.append("%-6s base=%.1f mil gaps=%s groups=%s"
@@ -246,4 +259,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

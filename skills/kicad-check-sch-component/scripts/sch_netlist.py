@@ -29,6 +29,7 @@ SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
 for _p in (HERE, SHARED):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+from cli import guard                             # noqa: E402
 
 try:
     sys.stdout.reconfigure(errors="replace")
@@ -70,6 +71,7 @@ def export_netlist(lib, workdir, symbol=None, footprint=None, lib_id=None):
             "footprint": footprint or fields.get("Footprint", "")}
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("lib")
@@ -96,4 +98,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

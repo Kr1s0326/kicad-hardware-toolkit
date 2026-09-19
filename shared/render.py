@@ -32,8 +32,6 @@ import argparse
 import glob
 import os
 import re
-import shutil
-import subprocess
 import sys
 
 # Windows 控制台常是 GBK；输出里若出现 GBK 以外的字符（↔ ✅ 之类）会直接抛
@@ -45,52 +43,25 @@ except Exception:                                       # noqa: BLE001
     pass
 
 # ------------------------------------------------------------------ 工具定位
-KICAD_CLI_CANDIDATES = [
-    r"C:\Program Files\KiCad\10.0\bin\kicad-cli.exe",
-    r"C:\Program Files\KiCad\9.0\bin\kicad-cli.exe",
-    r"C:\Program Files\KiCad\8.0\bin\kicad-cli.exe",
-    "/usr/bin/kicad-cli", "/usr/local/bin/kicad-cli",
-]
+# 全部委托给 toolchain（唯一的定位实现）。这里保留同名薄封装，
+# 是为了不破坏已有的 import 和 render.py which 子命令。
+import toolchain as _tc
+from cli import guard                             # noqa: E402
 
-CHROME_CANDIDATES = [
-    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser",
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-]
-
-
-def _first(cands, what):
-    for c in cands:
-        if os.path.exists(c):
-            return c
-    for name in (os.path.basename(c) for c in cands):
-        p = shutil.which(name)
-        if p:
-            return p
-    return None
+KICAD_CLI_CANDIDATES = _tc.KICAD_CLI_CANDIDATES      # 兼容旧引用
+CHROME_CANDIDATES = _tc.CHROME_CANDIDATES
 
 
 def kicad_cli():
-    p = os.environ.get("KICAD_CLI") or _first(KICAD_CLI_CANDIDATES, "kicad-cli")
-    if not p:
-        raise SystemExit("kicad-cli not found - set the KICAD_CLI env var")
-    return p
+    return _tc.kicad_cli()
 
 
 def chrome():
-    p = os.environ.get("CHROME") or _first(CHROME_CANDIDATES, "chrome")
-    if not p:
-        raise SystemExit("no chrome/edge found - set the CHROME env var "
-                         "(needed to turn SVG into PNG)")
-    return p
+    return _tc.chrome()
 
 
 def run(cmd, **kw):
-    return subprocess.run(cmd, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", **kw)
+    return _tc.run(cmd, **kw)
 
 
 # ------------------------------------------------------------------ SVG -> PNG
@@ -203,6 +174,7 @@ def contact_sheet(pngs, out, cols=None, cell=520, title=None):
 
 
 # ------------------------------------------------------------------ CLI
+@guard
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -247,4 +219,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

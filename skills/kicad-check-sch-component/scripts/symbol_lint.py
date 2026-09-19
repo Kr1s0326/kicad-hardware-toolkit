@@ -41,10 +41,16 @@ CLI
 
 import argparse
 import json
-import math
-import os
 import re
 import sys
+
+import os
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
+if SHARED not in sys.path:
+    sys.path.insert(0, SHARED)
+from cli import guard                             # noqa: E402
 
 try:
     sys.stdout.reconfigure(errors="replace")
@@ -269,7 +275,6 @@ def lint(sym_path, sym_name=None, min_pitch_mil=200.0, group_gap_mil=400.0,
                           ("right", [p for p in pins if side_of(p) == "right"])):
             if grp:
                 ys = [p["y"] for p in grp]
-                d = min(ys) - by0 if side == "left" else by1 - max(ys)
                 if min(min(ys) - by0, by1 - max(ys)) < m - 1e-6:
                     warns.append(("body_margin",
                                   "%s 边最边上的引脚离本体上/下边缘只有 %.2f mm"
@@ -306,27 +311,34 @@ def lint(sym_path, sym_name=None, min_pitch_mil=200.0, group_gap_mil=400.0,
             "issues": issues, "warnings": warns, "sides": groups}
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("lib")
     ap.add_argument("--symbol")
-    ap.add_argument("--min-pitch", type=float, default=200.0, help="mil")
-    ap.add_argument("--group-gap", type=float, default=400.0, help="mil")
+    ap.add_argument("--min-pitch", type=float, default=None,
+                    help="mil；不给则取 groups.json 的 _style，再否则 200")
+    ap.add_argument("--group-gap", type=float, default=None,
+                    help="mil；不给则取 groups.json 的 _style，再否则 400")
     ap.add_argument("--grid", type=float, default=50.0, help="mil")
     ap.add_argument("--groups", help="分组 JSON：{边: [[组内引脚名...], ...]}")
     ap.add_argument("--json")
     a = ap.parse_args()
 
     dec = json.load(open(a.groups, encoding="utf-8")) if a.groups else None
-    r = lint(a.lib, a.symbol, a.min_pitch, a.group_gap, a.grid, declared=dec)
+    style = (dec or {}).get("_style") if isinstance(dec, dict) else None
+    style = style if isinstance(style, dict) else {}
+    mp = a.min_pitch if a.min_pitch is not None else float(style.get("pitch_mil", 200.0))
+    gg = a.group_gap if a.group_gap is not None else float(style.get("group_gap_mil", 400.0))
+    r = lint(a.lib, a.symbol, mp, gg, a.grid, declared=dec)
     print("symbol :", r["symbol"])
     print("pins   : %d" % len(r["pins"]))
     if r["body"]:
         x0, y0, x1, y1 = r["body"]
         print("body   : %.2f x %.2f mm  (x %.2f..%.2f, y %.2f..%.2f)"
               % (x1 - x0, y1 - y0, x0, x1, y0, y1))
-    print("规范   : 组内 >= %.0f mil, 组间 >= %.0f mil, 栅格 %.0f mil"
-          % (a.min_pitch, a.group_gap, a.grid))
+    print("规范   : 组内 >= %.0f mil, 组间 >= %.0f mil, 栅格 %.0f mil%s"
+          % (mp, gg, a.grid, "  (取自 groups.json)" if style else ""))
 
     print("\n--- 各边间距 ---")
     for side, g in r["sides"].items():

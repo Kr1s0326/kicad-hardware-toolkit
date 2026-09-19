@@ -22,11 +22,8 @@ CLI
     python kicad_io.py loadable <path>       # 检查文件/库能否被 kicad-cli 加载
 """
 
-import glob
 import os
 import re
-import shutil
-import subprocess
 import sys
 
 try:
@@ -35,44 +32,29 @@ try:
 except Exception:                                       # noqa: BLE001
     pass
 
-KICAD_CLI_CANDIDATES = [
-    r"C:\Program Files\KiCad\10.0\bin\kicad-cli.exe",
-    r"C:\Program Files\KiCad\9.0\bin\kicad-cli.exe",
-    r"C:\Program Files\KiCad\8.0\bin\kicad-cli.exe",
-    "/usr/bin/kicad-cli", "/usr/local/bin/kicad-cli",
-]
-KICAD_SHARE_CANDIDATES = [
-    r"C:\Program Files\KiCad\10.0\share\kicad",
-    r"C:\Program Files\KiCad\9.0\share\kicad",
-    "/usr/share/kicad",
-]
+# 外部工具定位统一在 <toolkit>/shared/toolchain.py（只有一份实现）
+HERE = os.path.dirname(os.path.abspath(__file__))
+SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
+if SHARED not in sys.path:
+    sys.path.insert(0, SHARED)
+from cli import guard                             # noqa: E402
+import toolchain                                        # noqa: E402
+
+KICAD_CLI_CANDIDATES = toolchain.KICAD_CLI_CANDIDATES   # 兼容旧引用
 
 MIL = 0.0254
 
 
 def kicad_cli():
-    p = os.environ.get("KICAD_CLI")
-    if p and os.path.exists(p):
-        return p
-    for c in KICAD_CLI_CANDIDATES:
-        if os.path.exists(c):
-            return c
-    w = shutil.which("kicad-cli")
-    if w:
-        return w
-    raise SystemExit("kicad-cli not found - set the KICAD_CLI env var")
+    return toolchain.kicad_cli()
 
 
 def kicad_share():
-    for c in KICAD_SHARE_CANDIDATES:
-        if os.path.isdir(c):
-            return c
-    return None
+    return toolchain.kicad_share()
 
 
 def run(cmd):
-    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace")
+    return toolchain.run(cmd)
 
 
 # --------------------------------------------------------------- 版本探测
@@ -154,6 +136,7 @@ def loadable(path, kind=None):
     return (not bad), r.returncode, first
 
 
+@guard
 def main():
     if len(sys.argv) < 2:
         print(__doc__)

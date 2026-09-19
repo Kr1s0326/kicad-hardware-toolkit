@@ -116,7 +116,7 @@ VS/GND 接电源符号、输入接驱动、输出接负载、ALERT 接上拉，
 
 ## 通路 D —— 渲染目视（`render.py`）
 
-见 [render-and-look.md](render-and-look.md)。符号侧的清单在 §4.2。
+见 [render-and-look.md](../../../shared/render-and-look.md)。符号侧的清单在 §4.2。
 
 ---
 

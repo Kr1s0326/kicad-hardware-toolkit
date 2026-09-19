@@ -17,13 +17,20 @@ import glob
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-KICAD_SHARE = r"C:\Program Files\KiCad\10.0\share\kicad"
-KICAD_CLI = r"C:\Program Files\KiCad\10.0\bin\kicad-cli.exe"
+# 外部工具定位统一在 <toolkit>/shared/toolchain.py（只有一份实现）。
+# 以前这里硬编码了 KiCad 10.0 的绝对路径，升级 KiCad 或换机器就直接挂。
+SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
+if SHARED not in sys.path:
+    sys.path.insert(0, SHARED)
+from cli import guard                             # noqa: E402
+import toolchain                                        # noqa: E402
+
+KICAD_SHARE = toolchain.kicad_share(required=True)
+KICAD_CLI = toolchain.kicad_cli()
 
 # package -> (kicad footprint, family, board size)
 CASES = {
@@ -138,18 +145,15 @@ def make_case(name, out):
     os.makedirs(os.path.join(d, "gerber"), exist_ok=True)
     pcb = os.path.join(d, name + ".kicad_pcb")
     write_pcb(pcb, mod, (board[0] / 2, board[1] / 2), board)
-    if os.path.exists(KICAD_CLI):
-        subprocess.run([KICAD_CLI, "pcb", "export", "gerbers", "-o",
-                        os.path.join(d, "gerber"), "--layers",
-                        "F.Cu,F.Paste,F.Mask,F.SilkS,F.Fab,Edge.Cuts",
-                        "--no-x2", "--no-netlist", pcb], check=False,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run([KICAD_CLI, "pcb", "export", "drill", "-o",
-                        os.path.join(d, "gerber"), "--format", "excellon",
-                        "--excellon-separate-th", pcb], check=False,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for f in glob.glob(os.path.join(d, "gerber", "*PTH.drl")):
-            os.remove(f)
+    toolchain.run([KICAD_CLI, "pcb", "export", "gerbers", "-o",
+                   os.path.join(d, "gerber"), "--layers",
+                   "F.Cu,F.Paste,F.Mask,F.SilkS,F.Fab,Edge.Cuts",
+                   "--no-x2", "--no-netlist", pcb])
+    toolchain.run([KICAD_CLI, "pcb", "export", "drill", "-o",
+                   os.path.join(d, "gerber"), "--format", "excellon",
+                   "--excellon-separate-th", pcb])
+    for f in glob.glob(os.path.join(d, "gerber", "*PTH.drl")):
+        os.remove(f)
     write_spec(name, d, family, mod, board)
     return d
 
@@ -181,7 +185,6 @@ def write_spec(name, d, family, mod, board):
         ]
     else:
         xs = [p[0] for p in pads]
-        ys = [p[1] for p in pads]
         ws = [p[2] for p in pads]
         hs = [p[3] for p in pads]
         ep = [p for p in pads if p[2] * p[3] > 4 * (sorted(w * h for w, h in
@@ -246,6 +249,7 @@ def _pitch(pads):
     return min(set(out), key=lambda v: (out.count(v) * -1, v))
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("outdir", nargs="?", default=os.path.join(HERE, "_testdata"))
@@ -307,4 +311,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

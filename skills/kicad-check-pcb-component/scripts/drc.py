@@ -37,6 +37,7 @@ SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
 for _p in (HERE, SHARED):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+from cli import guard                             # noqa: E402
 
 from core import board as board_mod                            # noqa: E402
 from render import kicad_cli, run                              # noqa: E402
@@ -86,7 +87,7 @@ def is_benign(v):
     return any(b.lower() in blob for b in BENIGN)
 
 
-def run_drc(pcb, report=None, severity_all=True, extra_rules=True):
+def run_drc(pcb, report=None, severity_all=True):
     report = report or os.path.splitext(pcb)[0] + ".drc.rpt"
     cmd = [kicad_cli(), "pcb", "drc", "-o", os.path.abspath(report),
            "--severity-all", "--exit-code-violations", os.path.abspath(pcb)]
@@ -99,6 +100,7 @@ def run_drc(pcb, report=None, severity_all=True, extra_rules=True):
             "violations": parse_report(txt)}
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("input", help=".kicad_pcb, or a .kicad_mod to wrap first")
@@ -139,4 +141,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

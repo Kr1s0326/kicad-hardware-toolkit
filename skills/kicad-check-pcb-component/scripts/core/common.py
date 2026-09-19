@@ -12,7 +12,6 @@ Every family falls back to `common.measure` / `common.panel` for these kinds:
     paste_hole_dia  largest drawn circle on the paste layer (stencil hole)
 """
 
-import math
 
 from core import draw as D
 

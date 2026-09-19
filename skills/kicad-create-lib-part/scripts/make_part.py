@@ -32,13 +32,17 @@ CLI
 
 import argparse
 import json
-import math
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
+if SHARED not in sys.path:
+    sys.path.insert(0, SHARED)
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+from cli import guard                             # noqa: E402
 
 try:
     sys.stdout.reconfigure(errors="replace")
@@ -46,7 +50,8 @@ try:
 except Exception:                                       # noqa: BLE001
     pass
 
-import kicad_io as kio                                  # noqa: E402
+import kicad_io as kio
+import toolchain                                  # noqa: E402
 
 MIL = 0.0254
 
@@ -140,12 +145,6 @@ def layout_symbol(spec):
             placed.append(dict(p, x=round(x, 4), y=round(y, 4), rot=rot))
         if grp:
             groups_out[want] = [[plain(p["name"]) for p in grp]]
-            # 本体要够高，避免电源引脚压到角落的引脚
-            need = plen + 2 * MIL * 50
-            if want == "top":
-                by1 += 0.0
-            else:
-                by0 -= 0.0
     return {"pins": placed, "body": (bx0, by0, bx1, by1),
             "groups": groups_out,
             "params": {"pitch": pitch, "gap": gap, "plen": plen}}
@@ -164,7 +163,6 @@ def emit_symbol(spec, lay, sym_version):
                  % (k, v, kio.num(x), kio.num(y),
                     ('\t\t\t(hide yes)\n' if hide else "")))
 
-    w = max(len(lay["pins"]) and 0 or 0, 0)
     prop("Reference", spec.get("reference", "U"), bx0, by1 + font * 1.0)
     prop("Value", name, bx1 * 0.5, by1 + font * 1.0)
     prop("Footprint", "%s:%s" % (spec["library"], spec["footprint"]),
@@ -288,9 +286,15 @@ def courtyard_cross(pads, body):
     bx, by = hx + CRTYD, hy + CRTYD
     PX = max((abs(x) + w / 2 for (_, x, y, w, h) in pads), default=hx) + CRTYD
     PY = max((abs(y) + h / 2 for (_, x, y, w, h) in pads), default=hy) + CRTYD
+    # 十字形只在“焊盘在 x 方向伸出、在 y 方向比本体窄”时成立（双排 gullwing）。
+    # 其余情况（四边都有焊盘的 QFP/QFN，或焊盘完全在本体内）就是普通矩形 ——
+    # 但矩形必须是 max(本体, 焊盘外沿)！
+    # 踩过的坑：这里曾写成 bx/by，于是 QFP 的外框（7.5mm）比焊盘外沿（10.4mm）
+    # 还小 2.9mm，贴片机的避让区直接是错的。双排封装走十字分支所以看不出来。
     if PX <= bx + 1e-9 or PY >= by - 1e-9:
-        return [(-bx, -by, bx, -by), (bx, -by, bx, by),
-                (bx, by, -bx, by), (-bx, by, -bx, -by)]
+        X, Y = max(bx, PX), max(by, PY)
+        return [(-X, -Y, X, -Y), (X, -Y, X, Y),
+                (X, Y, -X, Y), (-X, Y, -X, -Y)]
     return [
         (-bx, -by, bx, -by),          # 1  中段上边
         (bx, -by, bx, -PY),           # 2
@@ -322,6 +326,17 @@ def emit_footprint(spec, pads, fp_version, gen_version):
                     kio.num(w), layer))
 
     hx, hy = body["w"] / 2, body["h"] / 2
+    # 位号/Value 的文字位置：必须清过**所有**别的东西。
+    #   ① 外框之外（否则四边封装的 QFP/QFN 会压到上/下排焊盘）
+    #   ② 丝印之外，包括 Pin1 三角标（它比丝印框还往外伸 0.16）
+    #   ③ 再留 KiCad 默认的丝印间距 0.2 + 文字半高
+    # 前两版分别踩了 ① 和 ②：只按 body/2+0.95 放，双排封装看不出来；
+    # 改成外框+0.5 之后，又和 Pin1 三角标只差 0.08mm，被 DRC 的 silk_overlap 抓到。
+    cx = courtyard_cross(pads, body)
+    crt_y = max(abs(v) for s in cx for v in (s[1], s[3]))
+    marker_y = hy + SILK_OFF + 0.16          # Pin1 三角标最远到这儿
+    text_half = 0.5                          # 位号用 (size 1 1)
+    out_y = max(crt_y, marker_y) + 0.2 + text_half
     for x0, y0, x1, y1 in silk_lines(pads, body):
         line(x0, y0, x1, y1, "F.SilkS", SILK_W)
 
@@ -339,7 +354,6 @@ def emit_footprint(spec, pads, fp_version, gen_version):
     cy = courtyard_cross(pads, body)
     for x0, y0, x1, y1 in cy:
         line(x0, y0, x1, y1, "F.CrtYd", 0.05)
-
     # 装配层本体 + Pin1 倒角
     ch = 0.75
     pts = [(-hx + ch, -hy), (hx, -hy), (hx, hy), (-hx, hy), (-hx, -hy + ch)]
@@ -362,6 +376,13 @@ def emit_footprint(spec, pads, fp_version, gen_version):
                     kio.num(rratio)))
 
     model = pkg.get("model")
+    # 把 ${KICAD10_3DMODEL_DIR} 里的版本号换成**本机实际装的** KiCad 主版本，
+    # 否则生成的封装拿到别的 KiCad 版本上 3D 显示不出来。
+    if model:
+        v = toolchain.kicad_major()
+        if v:                    # 读不到版本号就保留原样，不要编一个不存在的变量名
+            model = re.sub(r"\$\{KICAD\d+_3DMODEL_DIR\}",
+                           "${KICAD%d_3DMODEL_DIR}" % v, model)
     M = ""
     if model:
         M = ('\t(model "%s"\n\t\t(offset\n\t\t\t(xyz 0 0 0)\n\t\t)\n'
@@ -379,16 +400,27 @@ def emit_footprint(spec, pads, fp_version, gen_version):
             '\t(attr smd)\n\t(duplicate_pad_numbers_are_jumpers no)\n%s'
             '\t(embedded_fonts no)\n%s)\n'
             % (name, fp_version, pkg.get("descr", ""), pkg.get("tags", ""),
-               "REF**", kio.num(-hy - 0.95), name, kio.num(hy + 0.95),
+               "REF**", kio.num(-out_y), name, kio.num(out_y),
                "".join(S), M))
 
 
 # ============================================================ 产出附带文件
 def emit_groups(spec, lay):
+    """分组 + **绘制规范**一起交给校验侧。
+
+    带上 pitch/group_gap 是刻意的：校验侧的 --min-pitch/--group-gap 以前是独立
+    默认值，改了 spec 的规范而不同步告诉校验侧，就会报一堆假 FAIL。
+    （下划线开头的键会被 symbol_lint 当成元数据忽略。）
+    """
+    st = spec.get("symbol_style", {})
+    gap = st.get("group_gap_mil", 400)
     g = {k: v for k, v in lay["groups"].items() if v}
+    g["_style"] = {"pitch_mil": st.get("pitch_mil", 200),
+                   "group_gap_mil": gap,
+                   "grid_mil": 50}
     g["_说明"] = ("分组是【输入】。'组间 %g mil' 几何上不可判 —— "
                   "把 IN+ 挪一格就可能变成另一个同样合规的分组。"
-                  % spec.get("symbol_style", {}).get("group_gap_mil", 400))
+                  % gap)
     return g
 
 
@@ -396,7 +428,6 @@ def emit_fp_spec(spec, pads):
     pkg = spec["package"]
     n = len(pads)
     xs = [p[1] for p in pads]
-    ys = [p[2] for p in pads]
     rows = [
         {"symbol": "A", "requirement": pkg.get("height_req", "-"), "kind": "na",
          "note": "高度类尺寸，2D 文件无法测量"},
@@ -437,6 +468,22 @@ def generate(spec_path, outdir):
     gen_v = fmts.get("generator_version", "10.0")
 
     lay = layout_symbol(spec)
+    # 栅格自检：顶对齐时第一个引脚的 y = 最大跨度/2。若 pitch/group_gap 不是
+    # 100 mil 的整数倍，半个跨度就可能落在 50 mil 网格之外 —— 引脚会连不上线，
+    # 而画出来完全正常。这里显式提醒，别让用户从"ERC 报一堆 off_grid"倒推。
+    warns = []
+    grid = 50 * MIL               # 50 mil = 1.27 mm（KiCad 默认连接栅格）
+    for q in lay["pins"]:
+        for axis, v in (("x", q["x"]), ("y", q["y"])):
+            if abs(v / grid - round(v / grid)) > 1e-6:
+                warns.append("引脚 %s 的 %s=%.3f mm 不在 50 mil 栅格上"
+                             % (q["number"], axis, v))
+    if warns:
+        st = spec.get("symbol_style", {})
+        warns.append("原因通常是 symbol_style 的 pitch_mil(%s)/group_gap_mil(%s) "
+                     "不是 100 的整数倍 —— 顶对齐后半个跨度会落在半格上。"
+                     % (st.get("pitch_mil", 200), st.get("group_gap_mil", 400)))
+
     libdir = os.path.join(outdir, spec["library"])
     pretty = os.path.join(outdir, spec["library"] + ".pretty")
     os.makedirs(libdir, exist_ok=True)
@@ -460,9 +507,10 @@ def generate(spec_path, outdir):
 
     return {"sym": sym_path, "fp": fp_path, "pretty": pretty,
             "groups": grp, "fp_spec": fsp, "layout": lay, "pads": pads,
-            "spec": spec}
+            "spec": spec, "warnings": warns}
 
 
+@guard
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("spec")
@@ -484,6 +532,8 @@ def main():
         if g:
             print("  %-6s 分组: %s" % (side, [" ".join(x) for x in g]))
     print("焊盘    : %d" % len(r["pads"]))
+    for w in r["warnings"]:
+        print("  [warn] %s" % w)
 
     if a.verify:
         print("\n--- 可加载性（只证明'能加载'，不证明'正确'）---")

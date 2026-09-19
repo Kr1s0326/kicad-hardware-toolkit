@@ -77,6 +77,7 @@ scripts/
 ├── sch_erc.py          C：跑 ERC + 提取电气类型 + 分类违规
 ├── pdf_pins.py         从手册 PDF 抽 Table 5-1（含 open-drain 识别）
 ├── render.py           D：kicad-cli 出 SVG -> headless chrome 出 PNG
+├── selftest.py         22 项黄金测试（纯标准库，不需要 CAD）
 ├── pinmap.py           E：引脚↔焊盘编号契约
 └── (render.py / pinmap.py 已移到 <toolkit>/shared/，只有一份)
 references/
@@ -137,7 +138,7 @@ python scripts/render.py sym lib.kicad_sym outdir
 
 ## 共享代码
 
-`render.py`、`pinmap.py`、`render-and-look.md` 放在 **`<toolkit>/shared/`**，
-只有一份。skill 通过 `../../shared/` 引用（脚本里由 `SHARED` 常量解析）。
+`toolchain.py`（找 kicad-cli/chrome）、`cli.py`（统一错误处理）、
+`render.py`、`pinmap.py`、`render-and-look.md` 都在 **`<toolkit>/shared/`**，只有一份。skill 通过 `../../shared/` 引用（脚本里由 `SHARED` 常量解析）。
 
 **改一处就够，不存在漂移。**

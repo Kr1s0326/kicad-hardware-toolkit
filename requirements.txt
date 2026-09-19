@@ -1,9 +1,18 @@
-# Python 依赖（全部是纯 Python 或已有轮子，pip install -r requirements.txt 即可）
-pdfplumber>=0.10    # 从数据手册 PDF 抽引脚表
-openpyxl>=3.1       # 尺寸测量表 xlsx 输出
-Pillow>=10.0        # 渲染图拼接（contact sheet）
+# Python 依赖
+#
+# 注意：三个 selftest.py **不需要任何第三方包**（纯标准库），
+# 所以 CI 里不装这些也能跑测试。下面这些只在真正干活时才用得到。
+#
+# 装上界是刻意的：pdfplumber 解析 PDF 的行为在大版本之间会变，
+# 没有上界的话某天 pip install 之后引脚表可能就抽不出来了。
+
+pdfplumber>=0.10,<1.0    # 从数据手册 PDF 抽引脚表
+openpyxl>=3.1,<4.0       # 尺寸测量表 xlsx 输出
+Pillow>=10.0,<13.0       # 渲染图拼接（contact sheet）、SVG->PNG 尺寸探测
+lxml>=5.0,<7.0           # pdfplumber 的可选加速依赖
 
 # 外部工具（不在 pip 里）：
-#   kicad-cli   随 KiCad 安装，用于导出 Gerber/网表、跑 DRC/ERC、3D 渲染
-#   chrome/edge 无头模式，用于 SVG -> PNG（渲染目视那一步）
-#   两者路径可用环境变量覆盖：KICAD_CLI=...  CHROME=...
+#   kicad-cli   随 KiCad 安装（>= 8），用于导 Gerber/网表、跑 DRC/ERC、3D 渲染
+#   chrome/edge 基于 Chromium 的浏览器，无头模式把 SVG 转 PNG
+# 两者路径可用环境变量覆盖：KICAD_CLI=...  CHROME=...
+# 设了无效路径会**直接报错**，不会静默回退到自动探测。
