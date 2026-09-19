@@ -32,6 +32,7 @@ CLI
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -66,6 +67,12 @@ SILK_W = 0.12
 COPPER_CLR = 0.2                # KiCad 生成器的 silk/pad 间距
 CRTYD = 0.25                    # 外框余量
 SILK_MIN = 0.05                 # 短于这个的丝印残段丢掉
+
+# 四角净空用的常数在 shared/kitext.py —— 校验侧的 symbol_lint 也要用同一组，
+# 各写一份迟早会漂移，然后检查就静默失效了。
+from kitext import NAME_OFF, text_len, vert_half               # noqa: E402
+
+CORNER_GAP = 0.25               # 两排名字在四角要留的净空
 
 
 # ============================================================ 符号布局
@@ -121,6 +128,25 @@ def layout_symbol(spec):
     tb_need = max(tb_span("top"), tb_span("bottom")) / 2.0
     if tb_need:
         hw = max(hw, tb_need + topm)
+
+    # 四角不能压字。上/下排的引脚名是**竖着**写的，从本体上/下边沿往里伸；
+    # 左/右排的引脚名横着写，从左/右边沿往里伸 —— 四角就是这两排抢的地方。
+    # 上面那条只保证“引脚塞得进本体宽度”，完全没管名字占多宽，于是本体够宽、
+    # 引脚都在里面，名字却叠在一起（ESP32-S3 和 CY8C6245 都中过）。
+    # 判据：左边名字的右端  <  最左那个上/下排名字的左端。
+    #   -hw + NAME_OFF + w_side + CORNER_GAP < -tb_need - VERT_HALF
+    if tb_need:
+        font = st.get("font", 1.27)
+        w_side = max([text_len(plain(p["name"]), font) for p in pins
+                      if p.get("side") in ("left", "right")] or [0.0])
+        hw = max(hw, NAME_OFF + w_side + CORNER_GAP + tb_need + vert_half(font))
+
+    # 本体半宽必须落在栅格上。引脚根部 x = ±(hw + plen)，hw 只要取了非整格
+    # 的值，**整排引脚**就一起掉到栅格外 —— 画出来完全正常，却一根线也连不上。
+    # 上面几条取 max 的约束都可能算出非整格的值，所以最后统一往上取整。
+    # （CY8C6245 第一次加四角净空时算到 17.22mm，38 个引脚全掉出栅格。）
+    _grid = 50 * MIL
+    hw = math.ceil(hw / _grid - 1e-9) * _grid
 
     placed, groups_out = [], {}
     for side in ("left", "right"):
@@ -220,7 +246,49 @@ def emit_symbol(spec, lay, sym_version):
 
 
 # ============================================================ 封装布局
-def layout_pads(pkg):
+BALL_RE = re.compile(r"^([A-Z]+)([0-9]+)$")
+
+
+def layout_ball_grid(pkg, numbers):
+    """球栅阵列（WLCSP / CSP / BGA / LGA）的焊盘位置。
+
+    焊盘**不是算出来的，是从引脚号解出来的**：JEDEC 球名（"A11"、"C7"）本身
+    就把行列编进去了。所以符号的引脚号和封装的焊盘号不可能对不上 —— 它们
+    本来就是同一个字符串，不存在"两处各写一遍然后慢慢漂移"这种事。
+
+        x = (列号 - col_zero) * col_pitch
+        y = row_y[行字母]
+
+    行间距给的是一整张表而不是一个数：交错阵列（SG-XFWLB-49）的行距是
+    0.280 / 0.341 交替的，单个 row_pitch 表达不了。
+    """
+    letters, row_y = pkg["row_letters"], pkg["row_y"]
+    if len(letters) != len(row_y):
+        raise ValueError("row_letters 有 %d 个字母，row_y 有 %d 个数，对不上"
+                         % (len(letters), len(row_y)))
+    ry = dict(zip(letters, row_y))
+    cp = float(pkg["col_pitch"])
+    c0 = float(pkg.get("col_zero", 0))
+    d = float(pkg.get("pad_dia", pkg.get("ball_dia", 0.25)))
+
+    pads, bad = [], []
+    for num in numbers:
+        m = BALL_RE.match(str(num))
+        if not m or m.group(1) not in ry:
+            bad.append(str(num))
+            continue
+        pads.append((str(num), round((int(m.group(2)) - c0) * cp, 4),
+                     float(ry[m.group(1)]), d, d))
+    if bad:
+        raise ValueError("这些引脚号不是合法球名（<行字母><列号>）：%s"
+                         % "、".join(bad[:8]))
+    return pads
+
+
+def layout_pads(spec):
+    pkg = spec["package"]
+    if pkg.get("family") == "grid_array":
+        return layout_ball_grid(pkg, [p["number"] for p in spec["pins"]])
     sides = pkg.get("sides", ["left", "right"])
     n = int(pkg["pads_per_side"])
     pitch = float(pkg["pitch"])
@@ -326,8 +394,8 @@ def silk_lines(pads, body):
     return out
 
 
-def courtyard_cross(pads, body):
-    """外框 = max(本体, 焊盘外沿) + 0.25 的并集轮廓。
+def courtyard_cross(pads, body, margin=CRTYD):
+    """外框 = max(本体, 焊盘外沿) + margin 的并集轮廓。
 
     不是矩形，是一个 12 段的“十字/凸字形”：中间一段按本体，两端按焊盘外沿。
     在官方 MSOP-10 与 SOIC-8 上逐段核对过，两边的 12 条线段完全对得上。
@@ -336,9 +404,9 @@ def courtyard_cross(pads, body):
     这个形状本身。拉平了外框就退化成矩形，贴片机的避让区就不准了。
     """
     hx, hy = body["w"] / 2, body["h"] / 2
-    bx, by = hx + CRTYD, hy + CRTYD
-    PX = max((abs(x) + w / 2 for (_, x, y, w, h) in pads), default=hx) + CRTYD
-    PY = max((abs(y) + h / 2 for (_, x, y, w, h) in pads), default=hy) + CRTYD
+    bx, by = hx + margin, hy + margin
+    PX = max((abs(x) + w / 2 for (_, x, y, w, h) in pads), default=hx) + margin
+    PY = max((abs(y) + h / 2 for (_, x, y, w, h) in pads), default=hy) + margin
     # 十字形只在“焊盘在 x 方向伸出、在 y 方向比本体窄”时成立（双排 gullwing）。
     # 其余情况（四边都有焊盘的 QFP/QFN，或焊盘完全在本体内）就是普通矩形 ——
     # 但矩形必须是 max(本体, 焊盘外沿)！
@@ -368,8 +436,13 @@ def emit_footprint(spec, pads, fp_version, gen_version):
     pkg = spec["package"]
     body = pkg["body"]
     name = spec["footprint"]
-    r = pkg["pad"].get("roundrect_rratio")
+    grid = pkg.get("family") == "grid_array"
+    r = pkg.get("pad", {}).get("roundrect_rratio")
     corner = pkg.get("pad1_corner", "top-left")
+    # 球栅阵列的外框余量按 IPC-7351 标称取 1.0mm/边 —— 官方 package/grid_array
+    # 生成器在 WLCSP-20/35/64 上量的都是本体 +1.00（球阵封装要留返修空间）。
+    # 其余封装是 0.25。这个数不是拍的，是三个官方封装逐值对出来的。
+    cmargin = float(pkg.get("courtyard_margin", 1.0 if grid else CRTYD))
     S = []
 
     def line(x0, y0, x1, y1, layer, w=0.12):
@@ -385,7 +458,7 @@ def emit_footprint(spec, pads, fp_version, gen_version):
     #   ③ 再留 KiCad 默认的丝印间距 0.2 + 文字半高
     # 前两版分别踩了 ① 和 ②：只按 body/2+0.95 放，双排封装看不出来；
     # 改成外框+0.5 之后，又和 Pin1 三角标只差 0.08mm，被 DRC 的 silk_overlap 抓到。
-    cx = courtyard_cross(pads, body)
+    cx = courtyard_cross(pads, body, cmargin)
     crt_y = max(abs(v) for s in cx for v in (s[1], s[3]))
     marker_y = hy + SILK_OFF + 0.16          # Pin1 三角标最远到这儿
     text_half = 0.5                          # 位号用 (size 1 1)
@@ -404,11 +477,13 @@ def emit_footprint(spec, pads, fp_version, gen_version):
                 kio.num(sx + s * 0.79), kio.num(sy - 0.16),
                 kio.num(sx + s * 0.31), kio.num(sy - 0.16), kio.num(SILK_W)))
 
-    cy = courtyard_cross(pads, body)
+    cy = courtyard_cross(pads, body, cmargin)
     for x0, y0, x1, y1 in cy:
         line(x0, y0, x1, y1, "F.CrtYd", 0.05)
-    # 装配层本体 + Pin1 倒角
-    ch = 0.75
+    # 装配层本体 + Pin1 倒角。
+    # 官方 WLCSP 的倒角是 0.5 * min(本体半宽, 本体半高) —— WLCSP-20/35/64 三个
+    # 都对上；peripheral 族才是固定的 0.75。
+    ch = 0.5 * min(hx, hy) if grid else 0.75
     pts = [(-hx + ch, -hy), (hx, -hy), (hx, hy), (-hx, hy), (-hx, -hy + ch)]
     if corner != "top-left":
         pts = [(hx - ch, -hy), (hx, -hy + ch), (hx, hy), (-hx, hy), (-hx, -hy)]
@@ -421,6 +496,14 @@ def emit_footprint(spec, pads, fp_version, gen_version):
              '\t\t\t\t(thickness 0.11)\n\t\t\t)\n\t\t)\n\t)\n')
 
     for num, x, y, w, h in pads:
+        if grid:
+            # 球阵焊盘是**圆**的，不是圆角矩形；pad_prop_bga 让 KiCad
+            # 在 3D 与丝印检查里按器件而不是按 SMD 处理（官方 WLCSP 同款）。
+            S.append('\t(pad "%s" smd circle\n\t\t(at %s %s)\n\t\t(size %s %s)\n'
+                     '\t\t(property pad_prop_bga)\n'
+                     '\t\t(layers "F.Cu" "F.Mask" "F.Paste")\n\t)\n'
+                     % (num, kio.num(x), kio.num(y), kio.num(w), kio.num(h)))
+            continue
         rratio = r if r is not None else round(0.25, 6)
         S.append('\t(pad "%s" smd roundrect\n\t\t(at %s %s)\n\t\t(size %s %s)\n'
                  '\t\t(layers "F.Cu" "F.Mask" "F.Paste")\n'
@@ -449,6 +532,9 @@ def emit_footprint(spec, pads, fp_version, gen_version):
         if v:                    # 读不到版本号就保留原样，不要编一个不存在的变量名
             model = re.sub(r"\$\{KICAD\d+_3DMODEL_DIR\}",
                            "${KICAD%d_3DMODEL_DIR}" % v, model)
+    # 阻焊开窗余量：球阵封装按球径取（官方 WLCSP 是 0.02 / 0.05，随球径变），
+    # spec 里给多少写多少，没给就不写这个 token。
+    mask = pkg.get("solder_mask_margin")
     M = ""
     if model:
         M = ('\t(model "%s"\n\t\t(offset\n\t\t\t(xyz 0 0 0)\n\t\t)\n'
@@ -456,7 +542,7 @@ def emit_footprint(spec, pads, fp_version, gen_version):
              '\t\t\t(xyz 0 0 0)\n\t\t)\n\t)\n' % model)
 
     return ('(footprint "%s"\n\t(version %s)\n\t(generator "kicad-footprint-generator")\n'
-            '\t(layer "F.Cu")\n\t(descr "%s")\n\t(tags "%s")\n'
+            '\t(layer "F.Cu")\n\t(descr "%s")\n\t(tags "%s")\n%s'
             '\t(property "Reference" "%s"\n\t\t(at 0 %s 0)\n\t\t(layer "F.SilkS")\n'
             '\t\t(effects\n\t\t\t(font\n\t\t\t\t(size 1 1)\n'
             '\t\t\t\t(thickness 0.15)\n\t\t\t)\n\t\t)\n\t)\n'
@@ -466,6 +552,7 @@ def emit_footprint(spec, pads, fp_version, gen_version):
             '\t(attr smd)\n\t(duplicate_pad_numbers_are_jumpers no)\n%s'
             '\t(embedded_fonts no)\n%s)\n'
             % (name, fp_version, pkg.get("descr", ""), pkg.get("tags", ""),
+               ("\t(solder_mask_margin %s)\n" % kio.num(mask)) if mask else "",
                "REF**", kio.num(-out_y), name, kio.num(out_y),
                "".join(S), M))
 
@@ -490,8 +577,75 @@ def emit_groups(spec, lay):
     return g
 
 
+def emit_fp_spec_grid(spec, pads):
+    """球栅阵列的尺寸表，走 JEDEC 那一套符号。
+
+    与 peripheral 族（e / b / L / D / E）是两套完全不同的量：球阵没有“引脚长度”，
+    却多出阵列跨距 D1/E1、矩阵位数 MD/ME、球栅距 eD、指定两排间距 eE?s、
+    斜向球距 eS?、基准偏移 SD/SE。kind 由校验侧的 grid_array family 消费。
+    """
+    pkg = spec["package"]
+    body = pkg["body"]
+    n = len(pads)
+    rows = [
+        {"symbol": "A", "requirement": pkg.get("height_req", "-"), "kind": "na",
+         "note": "高度类尺寸（A / A1），2D 文件无法测量"},
+        {"symbol": "D", "requirement": "%s" % body["w"], "kind": "body_w",
+         "nominal": body["w"], "note": "本体长度（要求值来自图纸）"},
+        {"symbol": "E", "requirement": "%s" % body["h"], "kind": "body_h",
+         "nominal": body["h"], "note": "本体宽度（要求值来自图纸）"},
+        {"symbol": "D1", "requirement": "%s" % pkg["array_w"],
+         "kind": "array_w", "nominal": float(pkg["array_w"]),
+         "note": "球阵列 D 向跨距（最外两排球心距）"},
+        {"symbol": "E1", "requirement": "%s" % pkg["array_h"],
+         "kind": "array_h", "nominal": float(pkg["array_h"]),
+         "note": "球阵列 E 向跨距"},
+        {"symbol": "MD", "requirement": "%d" % pkg["matrix_cols"],
+         "kind": "matrix_cols", "nominal": int(pkg["matrix_cols"]),
+         "note": "D 向矩阵位数（含 A1 空位，不是球数）"},
+        {"symbol": "ME", "requirement": "%d" % pkg["matrix_rows"],
+         "kind": "matrix_rows", "nominal": int(pkg["matrix_rows"])},
+        {"symbol": "N", "requirement": "%d" % n, "kind": "count",
+         "nominal": n},
+        {"symbol": "\u00d8b",
+         "requirement": pkg.get("ball_req", "%s" % pkg["pad_dia"]),
+         "kind": "dia", "nominal": float(pkg["pad_dia"]),
+         "note": "焊球直径（实测的是焊盘/钢网圆形孔径）"},
+        {"symbol": "eD", "requirement": "%s" % pkg["pitch"], "kind": "pitch",
+         "nominal": float(pkg["pitch"]), "note": "球栅距（同排相邻球心距）"},
+    ]
+    for r in pkg.get("row_spans", []):
+        rows.append({"symbol": r["symbol"], "requirement": r["requirement"],
+                     "kind": "row_span", "nominal": float(r["nominal"]),
+                     "from": r["from"], "to": r["to"],
+                     "note": "%s->%s 两排球心距" % (r["from"], r["to"])})
+    rows += [
+        {"symbol": "eS1", "requirement": "%s" % pkg["diag_min"],
+         "kind": "diag_min", "nominal": float(pkg["diag_min"]),
+         "note": "斜向最近球间距（外侧排）"},
+        {"symbol": "eS2", "requirement": "%s" % pkg["diag_max"],
+         "kind": "diag_max", "nominal": float(pkg["diag_max"]),
+         "note": "斜向最近球间距（中间排）"},
+        {"symbol": "SD", "requirement": "%s" % pkg["sd"], "kind": "sd",
+         "nominal": float(pkg["sd"]),
+         "note": "外排中心球到基准 B 的偏移"},
+        {"symbol": "SE", "requirement": "%s" % pkg["se"], "kind": "se",
+         "nominal": float(pkg["se"]), "note": "阵列中心到基准 A 的偏移"},
+    ]
+    return {"title": "%s 封装尺寸测量表" % spec["symbol"],
+            "component": spec.get("description", spec["symbol"]),
+            "family": "grid_array", "output": "%s_report.xlsx" % spec["symbol"],
+            "gerber_dir": "gerber", "rows": rows,
+            "notes": ["要求值来自 part_spec.json（人工从图纸录入）；"
+                      "实测值由校验 skill 反解析 Gerber 得到。",
+                      "本文件由 make_part.py 生成，是**要求**而非实测结果。",
+                      "A1 空位：图纸注 8 的 + 标记，不占球但占矩阵位。"]}
+
+
 def emit_fp_spec(spec, pads):
     pkg = spec["package"]
+    if pkg.get("family") == "grid_array":
+        return emit_fp_spec_grid(spec, pads)
     n = len(pads)
     xs = [p[1] for p in pads]
     rows = [
@@ -567,7 +721,7 @@ def generate(spec_path, outdir):
     open(sym_path, "w", encoding="utf-8", newline="\n").write(
         emit_symbol(spec, lay, sym_v))
 
-    pads = layout_pads(spec["package"])
+    pads = layout_pads(spec)
     fp_path = os.path.join(pretty, spec["footprint"] + ".kicad_mod")
     open(fp_path, "w", encoding="utf-8", newline="\n").write(
         emit_footprint(spec, pads, fp_v, gen_v))

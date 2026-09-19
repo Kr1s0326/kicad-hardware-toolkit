@@ -22,24 +22,34 @@ import os
 __all__ = ["build_xlsx", "verdict", "HEAD"]
 
 HEAD = ["pin", "手册名", "网表名", "手册类型", "ERC类型", "结果"]
-COLW = [8, 16, 16, 18, 18, 10]
-RES_FILL = {"PASS": ("C6EFCE", "006100"), "NG": ("FFC7CE", "9C0006")}
+COLW = [8, 16, 16, 18, 18, 12]
+RES_FILL = {"PASS": ("C6EFCE", "006100"), "NG": ("FFC7CE", "9C0006"),
+            "类型未声明": ("FFEB9C", "9C5700")}
 # openpyxl 的颜色不带 "#"
 
 
 def verdict(row):
     """一行引脚比对的判定。
 
-    只有"两边都有、名字一致、类型一致"才算 PASS。
-    任一侧缺这个引脚 = NG（少引脚或多引脚，都是真错）。
+    失败态只有两种：任一侧缺这个引脚（少引脚与多引脚都是真错）、
+    或者名字/类型对不上。
+
+    **手册不给电气类型时既不算 PASS 也不算 NG，而是“类型未声明”。**
+    很多 MCU 手册的引脚表只有球号 + 信号名，压根没有 TYPE 列。
+    以前这里把 None 拿去比 ERC 推导出的类型，于是每个引脚都报 NG，
+    汇总变成“49/49 不一致”—— 而名字其实 49 个全对。
+    假 NG 比不查更糟：看报告的人会以为符号错了。
     """
     has_pdf = row.get("pdf_name") not in (None, "", "-")
     has_net = row.get("netlist_name") not in (None, "", "-")
     if not has_pdf or not has_net:
         return "NG"
-    if not row.get("name_ok") or not row.get("type_ok"):
+    if not row.get("name_ok"):
         return "NG"
-    return "PASS"
+    t = row.get("type_ok")
+    if t is None:                       # 要求一侧没声明 -> 无从判定
+        return "类型未声明"
+    return "PASS" if t else "NG"
 
 
 def build_xlsx(rows, out, title="", notes=None, sheet_name="引脚比对"):
@@ -62,12 +72,13 @@ def build_xlsx(rows, out, title="", notes=None, sheet_name="引脚比对"):
         cell.border = border
     ws.row_dimensions[1].height = 24
 
-    n_pass = n_ng = 0
+    n_pass = n_ng = n_na = 0
     for i, row in enumerate(rows):
         r = i + 2
         res = verdict(row)
         n_pass += res == "PASS"
         n_ng += res == "NG"
+        n_na += res == "类型未声明"
         vals = [row.get("pin", i + 1),
                 row.get("pdf_name") or "-",
                 row.get("netlist_name") or "-",
@@ -91,8 +102,9 @@ def build_xlsx(rows, out, title="", notes=None, sheet_name="引脚比对"):
     ws.freeze_panes = "A2"
 
     n = len(rows) + 3
-    head = ("%s   ——   共 %d 个引脚，PASS %d，NG %d"
-            % (title or "引脚比对", len(rows), n_pass, n_ng))
+    head = ("%s   ——   共 %d 个引脚，PASS %d，NG %d%s"
+            % (title or "引脚比对", len(rows), n_pass, n_ng,
+               "，类型未声明 %d" % n_na if n_na else ""))
     c = ws.cell(row=n - 1, column=1, value=head)
     c.font = Font(bold=True, size=11,
                   color="006100" if not n_ng else "9C0006")
@@ -124,8 +136,10 @@ def main():
     out = a.out or os.path.splitext(a.json_file)[0] + ".xlsx"
     p = build_xlsx(rows, out, a.title)
     print("report:", p)
-    print("PASS %d / NG %d" % (sum(verdict(r) == "PASS" for r in rows),
-                               sum(verdict(r) == "NG" for r in rows)))
+    print("PASS %d / NG %d / 类型未声明 %d"
+          % (sum(verdict(r) == "PASS" for r in rows),
+             sum(verdict(r) == "NG" for r in rows),
+             sum(verdict(r) == "类型未声明" for r in rows)))
 
 
 if __name__ == "__main__":

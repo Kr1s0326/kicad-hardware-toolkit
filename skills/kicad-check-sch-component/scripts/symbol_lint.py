@@ -51,6 +51,7 @@ SHARED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "shared"))
 if SHARED not in sys.path:
     sys.path.insert(0, SHARED)
 from cli import guard                             # noqa: E402
+from kitext import NAME_OFF, text_len, vert_half  # noqa: E402
 from pinmap import iter_pins                      # noqa: E402
 
 try:
@@ -330,23 +331,28 @@ def lint(sym_path, sym_name=None, min_pitch_mil=200.0, group_gap_mil=400.0,
         # 以前只查了"同一行左+右"，所以一个 76×71mm 的 56 脚 QFN 符号里
         # 四个角的文字全部叠在一起却一声不响。
         # 名字实际不会伸过本体中心，所以按半个本体长度截断，避免假警报。
-        def text_len(p):
-            return len(p["name"]) * font * 0.85
+        # 常数取自 shared/kitext.py —— 与生成侧同一组。**名字不是贴边画的**，
+        # 它在本体内侧 0.85mm 处起步；漏掉这个偏移，估出的名字就比实际短
+        # 0.67mm，刚好躲过判定（CY8C6245 上就是这么漏掉的）。
+        def _tl(p):
+            return text_len(p["name"], font)
 
         tb = [p for p in pins if side_of(p) in ("top", "bottom")]
         lr = [p for p in pins if side_of(p) in ("left", "right")]
-        f2 = font * 0.5
+        f2 = vert_half(font)
         hits = []
         for a in tb:
             ax = a["x"]
             ax0, ax1 = ax - f2, ax + f2
-            ay0 = (by1 - text_len(a)) if side_of(a) == "top" else by0
-            ay1 = by1 if side_of(a) == "top" else (by0 + text_len(a))
+            ay0 = (by1 - _tl(a)) if side_of(a) == "top" else by0
+            ay1 = by1 if side_of(a) == "top" else (by0 + _tl(a))
             for b in lr:
                 byy = b["y"]
                 by0_, by1_ = byy - f2, byy + f2
-                bx0_ = bx0 if side_of(b) == "left" else (bx1 - text_len(b))
-                bx1_ = (bx0 + text_len(b)) if side_of(b) == "left" else bx1
+                if side_of(b) == "left":
+                    bx0_, bx1_ = bx0 + NAME_OFF, bx0 + NAME_OFF + _tl(b)
+                else:
+                    bx0_, bx1_ = bx1 - NAME_OFF - _tl(b), bx1 - NAME_OFF
                 if (ax0 < bx1_ and ax1 > bx0_ and ay0 < by1_ and ay1 > by0_):
                     hits.append("%s(%s) × %s(%s)"
                                 % (a["number"], a["name"], b["number"], b["name"]))

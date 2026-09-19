@@ -59,6 +59,7 @@ except Exception:                                       # noqa: BLE001
     pass
 
 from core import board as board_mod                    # noqa: E402
+from core import spec as spec_mod                      # noqa: E402
 import render                                          # noqa: E402
 from render import kicad_cli, run                      # noqa: E402
 
@@ -109,6 +110,19 @@ def main():
     pcb = os.path.join(out, "board.kicad_pcb")
     board_mod.write_pcb(pcb, mod, lib_id=a.lib_id)
     print("board:", pcb)
+
+    # 焊盘间短路间距规则。KiCad 的默认值是 0.2mm，那是给 1.27mm 节距的普通
+    # 封装用的；0.4mm 节距的 WLCSP 根本达不到（相邻球心 0.35mm、焊盘 0.22mm
+    # -> 边到边 0.13mm），拿默认值跑会报一屏“间距违规”，而那**一个缺陷都不是**。
+    # 下界从 spec（图纸要求）推，不是从被测封装自己推 —— 取自封装自己的话
+    # 规则永远成立，DRC 就成了空跑。
+    if a.spec:
+        _sp = json.load(open(os.path.abspath(a.spec), encoding="utf-8"))
+        gap = spec_mod.min_pad_gap(_sp)
+        if gap and gap > 0:
+            dru = spec_mod.write_dru(pcb, gap)
+            print("drc rules: %s  (pad-to-pad >= %.3fmm，由 spec 推出)"
+                  % (os.path.basename(dru), gap - 0.005))
 
     # ---------------------------------------------------------- 1 Gerber
     step(1, "Gerber 反解量测  (独立通路 A: 量的是制造数据，不是封装文件)")

@@ -97,13 +97,18 @@ def check(group, name, cond, detail=""):
     RESULTS.append((group, name, bool(cond), detail))
 
 
-def expect(result, group, name, kind, want=True):
-    """result 是 symbol_lint.lint() 的返回值；检查 issues 里有没有某个 kind"""
-    kinds = [k for k, _ in result["issues"]]
+def expect(result, group, name, kind, want=True, where="issues"):
+    """result 是 symbol_lint.lint() 的返回值；检查某个 kind 在不在。
+
+    where: "issues"（必修）或 "warnings"（咨询）。两栏是刻意分开的 ——
+    例如四角文字交叠只进 warnings：它不影响电气，但影响可读性。
+    """
+    kinds = [k for k, _ in result[where]]
     got = kind in kinds
     check(group, name, got == want,
           "" if got == want else
-          ("期望 %s %s，实际 issues=%s" % ("出现" if want else "不出现", kind, kinds)))
+          ("期望 %s %s，实际 %s=%s"
+           % ("出现" if want else "不出现", kind, where, kinds)))
 
 
 def run(path, groups=None, **kw):
@@ -356,10 +361,66 @@ def test_pin_report_verdict(tmp):
     only_net = dict(ok, pdf_name="-", name_ok=False)
     check("pin_report", "网表有、手册没有 -> NG", v(only_net) == "NG", v(only_net))
 
+    # 手册不给电气类型时（很多 MCU 的引脚表只有球号 + 信号名）既不算 PASS
+    # 也不算 NG。以前把 None 拿去比 ERC 推出来的类型，于是**每个引脚都报 NG**，
+    # 汇总变成“49/49 不一致”，而名字其实 49 个全对 —— 假 NG 比不查更糟。
+    no_type = dict(ok, pdf_etype="-", type_ok=None)
+    check("pin_report", "★ 手册没类型列 + 名字对 -> 类型未声明（不是 NG）",
+          v(no_type) == "类型未声明", v(no_type))
+    no_type_bad_name = dict(no_type, netlist_name="MISO", name_ok=False)
+    check("pin_report", "★ 类型未声明但名字错 -> 仍然 NG",
+          v(no_type_bad_name) == "NG", v(no_type_bad_name))
+
     # 表格形状必须和需求一致（列名是给用户看的接口）
     check("pin_report", "表头 = pin|手册名|网表名|手册类型|ERC类型|结果",
           pin_report.HEAD == ["pin", "手册名", "网表名", "手册类型", "ERC类型", "结果"],
           str(pin_report.HEAD))
+
+
+def test_corner_text_overlap(tmp):
+    """四角的字：上/下排的名字竖着写、左/右排横着写，在四个角抢地方。
+
+    这条规则的常数取自 shared/kitext.py，和生成侧同一组。
+    下面的几何直接照搬 CY8C6245 加宽之前的样子（本体半宽 15.24mm，
+    上排 9 个引脚铺到 ±10.16mm，右排名字“P10.3”）：当时渲染图上
+    XRES 被 VDDD 盖掉一个字符、P0.0 被 VREF 盖掉，而 lint 一声不响 ——
+    因为它漏算了“名字离本体边缘 0.85mm”这个偏移，估出的名字短了 0.67mm。
+    """
+    # 几何照搬真件（都在 1.27mm 栅格上，免得 off_grid 混淆视听）：
+    #   本体半宽 15.24；上排 9 个引脚铺到 ±10.16；最上一个左/右引脚 y=29.21
+    def build(hw):
+        body = (-hw, -5.08, hw, 31.75)
+        ps = []
+        n = 9
+        for i in range(n):                  # 上排：名字 4 字符（VDDD / VREF 那种）
+            x = (i - (n - 1) / 2.0) * 2.54
+            ps.append(("C%d" % (i + 1), "VDDD", "power_in", x, 34.29, 270, 2.54))
+            ps.append(("D%d" % (i + 1), "VREF", "power_in", x, 34.29, 270, 2.54))
+        # 上面两个重复了，只留一个上排引脚名就够 —— 去掉重复的那组
+        ps = [p for p in ps if p[1] == "VDDD"]
+        ps.append(("E11", "XRES", "input", -(hw + 2.54), 29.21, 0, 2.54))
+        ps.append(("E9", "P0.0", "input", hw + 2.54, 29.21, 180, 2.54))
+        ps.append(("B10", "P10.3", "input", hw + 2.54, 5.08, 180, 2.54))
+        return ps, body
+
+    pins, body = build(15.24)
+    path = os.path.join(tmp, "corner.kicad_sym")
+    open(path, "w", encoding="utf-8").write(make_symbol(pins, body))
+    r = run(path, min_pitch=100)
+    expect(r, "corner", "★ 半宽 15.24 时抓到角落交叠", "overflow",
+           where="warnings")
+    hit = [m for k, m in r["warnings"] if k == "overflow"]
+    check("corner", "★ 点名到具体引脚（XRES×VDDD / P0.0×VDDD）",
+          hit and "XRES" in hit[0] and "VDDD" in hit[0] and "P0.0" in hit[0],
+          hit[0][:90] if hit else "没抓到")
+
+    # 加宽到 17.78（= 生成侧算出来的 700 mil），应当没声了
+    pins2, body2 = build(17.78)
+    path2 = os.path.join(tmp, "corner_wide.kicad_sym")
+    open(path2, "w", encoding="utf-8").write(make_symbol(pins2, body2))
+    expect(run(path2, min_pitch=100), "corner",
+           "★ 加宽到 17.78 后不再告警", "overflow", want=False,
+           where="warnings")
 
 
 def test_multi_unit(tmp):
@@ -384,8 +445,8 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         for fn in (test_pitch_and_groups, test_groups_shape,
                    test_grid_duplicate_body, test_pins_of, test_pin_report_verdict,
-                   test_hidden_and_stacked, test_body_margin_both_axes,
-                   test_multi_unit):
+                   test_corner_text_overlap, test_hidden_and_stacked,
+                   test_body_margin_both_axes, test_multi_unit):
             if pat and pat not in fn.__name__:
                 continue
             try:

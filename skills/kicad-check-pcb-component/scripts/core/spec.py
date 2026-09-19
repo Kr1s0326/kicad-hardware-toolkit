@@ -15,7 +15,54 @@ import sys
 
 from core import gerber as G
 
-__all__ = ["load_spec", "build_context", "verdict", "FILE_ALIASES"]
+__all__ = ["load_spec", "build_context", "verdict", "FILE_ALIASES",
+           "min_pad_gap", "DRU_TEMPLATE"]
+
+# 自定义 DRC 规则。KiCad 会自动加载与 .kicad_pcb 同名的 .kicad_dru。
+DRU_TEMPLATE = """(version 1)
+# 由 kicad-check-pcb-component 自动生成，**不是**被测封装的一部分。
+#
+# 为什么需要它：短路间距规则的默认值是 0.2mm，那是给 1.27mm 节距的
+# 普通封装用的。0.4mm 节距的 WLCSP，相邻球心 0.35mm、焊盘 0.22mm，
+# 边到边只有 0.13mm —— 拿默认值去跑，会报 79 项“间距违规”，
+# 但那些一个缺陷都不是，是**规则的默认值不适合这一族封装**。
+#
+# 下界取自 spec（即手册图纸的要求），不是取自被测封装自己：
+# 若取自封装自己，规则永远通过，DRC 就退化成空跑。
+(rule "pad-to-pad clearance (from spec)"
+	(constraint clearance (min %smm))
+	(condition "A.Type == 'Pad' && B.Type == 'Pad'"))
+"""
+
+
+def min_pad_gap(spec):
+    """从 spec 的**要求值**算出焊盘之间最小允许的铜间隔（mm）。
+
+    球阵族：min(eS1 斜向球距, eD 球栅距) - Øb
+    引脚族：e 节距 - b 脚宽
+
+    算不出来就返回 None（不写规则文件，用 KiCad 的默认值）。
+    """
+    by = {}
+    for r in spec.get("rows") or []:
+        if r.get("nominal") is not None and r.get("kind"):
+            by.setdefault(r["kind"], r["nominal"])
+    try:
+        if "dia" in by:                       # 球阵：最近的两个球是斜向的
+            near = [v for k, v in (("diag_min", by.get("diag_min")),
+                                   ("pitch", by.get("pitch"))) if v]
+            size = float(by["dia"])
+        elif "lead_width" in by:               # 引脚式：最近的两个脚在同侧
+            near = [float(v) for k, v in (("lead_pitch", by.get("lead_pitch")),)
+                    if v]
+            size = float(by["lead_width"])
+        else:
+            return None
+        if not near:
+            return None
+        return min(float(v) for v in near) - size
+    except (TypeError, ValueError):
+        return None
 
 FILE_ALIASES = {
     "cu":    ["f_cu", "f.cu", "gtl", "top.gbr", "top_copper", "_cu."],
@@ -28,6 +75,18 @@ FILE_ALIASES = {
 }
 _NOT_GERBER = (".png", ".jpg", ".jpeg", ".svg", ".pdf", ".json", ".txt", ".md",
                ".kicad_pcb", ".kicad_mod", ".csv", ".xlsx")
+
+
+def write_dru(board_path, gap):
+    """把自定义规则写到 <board>.kicad_dru（与 board.kicad_pcb 同名）。
+
+    gap 减 5µm：KiCad 判的是 actual < min，而 actual 是浮点算出来的，
+    正好相等时可能因为末位误差报违规。5µm 远小于制造公差，不会放过真问题。
+    """
+    dru = os.path.splitext(board_path)[0] + ".kicad_dru"
+    with open(dru, "w", encoding="utf-8", newline="\n") as f:
+        f.write(DRU_TEMPLATE % ("%.3f" % (float(gap) - 0.005)))
+    return dru
 
 
 def load_spec(path):

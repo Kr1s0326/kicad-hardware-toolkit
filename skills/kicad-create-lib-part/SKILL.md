@@ -88,6 +88,33 @@ package{}       ← 手册的 Package Outline + Example Board Layout 图
 | 上/下电源脚 | `side` 写 `top` / `bottom`，x=0 | 惯例 |
 | 本体 | 由最高的一侧 + 上下各 100 mil 余量推出 | – |
 
+**引脚一多就把 pitch 降到 100 mil。** 官方库对大 MCU 一律用 100 mil：
+STM32F103C8Tx（48 脚）、ATmega2560、PCA9555、TCA9548A 量出来都是
+组内 2.54mm / 组间 5.08mm。49 个引脚按 200 mil 排，本体要长到 130mm 以上。
+
+### 本体宽度由三个约束一起定（不是只靠 `body_half_width_mil` 拍）
+
+`layout_symbol()` 取三者最大，**最后统一向上取整到 50 mil**：
+
+1. spec 给的 `body_half_width_mil`
+2. 上/下排引脚铺得开：`tb_span/2 + top_margin`
+3. **四角不能压字**：`NAME_OFF + 最长的左/右引脚名 + CORNER_GAP + tb_span/2 + 竖排半宽`
+
+第 3 条踩过两次坑（ESP32-S3 与 CY8C6245）。上/下排的引脚名是**竖着**写的，
+从本体上、下边沿往里伸；左/右排的名字横着写，从左、右边沿往里伸 —— 四角就是
+这两排抢的地方。只保证"引脚塞得进本体宽度"是不够的：本体够宽、引脚都在里面，
+**名字却叠在一起**。
+
+常数放在 [`shared/kitext.py`](../../shared/kitext.py)，**生成侧和校验侧的
+`symbol_lint` 共用同一组** —— 各写一份迟早会漂移，然后检查就静默失效：
+明明压着字，却报"无疑问项"。（CY8C6245 上就是这么漏掉的：lint 漏算
+"名字离本体边缘 0.85mm"这个偏移，估出的名字短了 0.67mm，刚好躲过判定。）
+
+**取整那一步不能省。** 引脚根部 x = `±(hw + pin_length)`，`hw` 只要取了
+非整格的值，**整排引脚**就一起掉到 50 mil 栅格外 —— 画出来完全正常，
+却一根线也连不上，只有 ERC 会报一屏 `endpoint_off_grid`。
+（CY8C6245 算到 17.22mm，38 个引脚全掉出栅格。）
+
 `side_align: "center"` 可改成每边各自居中。**顶对齐更常见**，因为左右两侧的
 第一个引脚会对上，跨侧读数更容易。
 
@@ -102,6 +129,46 @@ package{}       ← 手册的 Package Outline + Example Board Layout 图
 | 装配层 | 本体真实外形，pin1 角倒角 0.75 | KiCad 惯例 |
 | 外框 | `max(本体, 焊盘外沿) + 0.25`，**12 段十字形而非矩形** | 官方 MSOP-10 与 SOIC-8 都是 12 段，逐段对上 |
 | Pin1 三角标 | 丝印角点外 0.16 / 0.55 | 官方库同款 |
+
+### 球栅阵列（`package.family = "grid_array"`）
+
+WLCSP / CSP / BGA / LGA 走另一套几何，**不要照搬上面那张表**。在
+`Package_CSP.pretty` 的三个官方 WLCSP（Anpec-20 / Maxim-35 / Efinix-64）上量的：
+
+| 元素 | 球阵族 | 引脚族（上面那套） |
+|---|---|---|
+| 焊盘 | **`smd circle` + `(property pad_prop_bga)`** | `smd roundrect` |
+| 外框 | **矩形，本体 +1.0mm/边**（IPC-7351 标称，球阵要留返修空间） | 12 段十字，+0.25 |
+| 装配层倒角 | **`0.5 × min(本体半宽, 本体半高)`** | 固定 0.75 |
+| 阻焊开窗 | `(solder_mask_margin)`，按球径取（官方 0.02 / 0.05） | 不写 |
+| 丝印 | 本体/2 + 0.11，被圆焊盘裁 | 同 |
+
+**焊盘位置不是算出来的，是从引脚号解出来的。** JEDEC 球名（`A11`、`C7`）
+本身就把行列编进去了，所以 `layout_pads()` 直接解析 `pins[].number`：
+
+```json
+"package": {
+  "family": "grid_array",
+  "row_letters": "ABCDEFGHJ",            // JEDEC 行字母，无 I/O/Q/S/X/Z
+  "row_y": [-1.242, -0.962, -0.682, -0.341, 0.0, 0.341, 0.682, 0.962, 1.242],
+  "col_pitch": 0.21, "col_zero": 6,        // x = (列号 - col_zero) * col_pitch
+  "pitch": 0.42, "array_w": 2.100, "array_h": 2.484,
+  "matrix_cols": 11, "matrix_rows": 9,
+  "ball_dia": 0.218, "pad_dia": 0.22,
+  "row_spans": [{"symbol":"eE1s","nominal":0.560,"from":"G","to":"J"}],
+  "diag_min": 0.350, "diag_max": 0.4005, "sd": 0.21, "se": 0.00
+}
+```
+
+**`row_y` 给的是一整张表，不是一个行距。** 交错阵列（SG-XFWLB-49）的行距是
+0.280 / 0.341 交替的，单个 `row_pitch` 表达不了 —— 而图纸恰恰是用交替行距
+才凑出 E1=2.484 和 eE1s/eE2s/eE3s 三个数的。
+
+`build_spec.py` 里的自检会拿 `sqrt(col_pitch² + 行距²)` 反算 eS1/eS2 与图纸对账：
+对得上，说明行距表没抄错。这个判据不依赖眼睛。
+
+A1 通常是**空位**（图纸注明 `+` = depopulated），但矩阵位数 MD/ME 仍把它算进去 ——
+所以 `N = MD × ME − 空位数`，别用 N 去反推 MD。
 
 ## 输出可加载性检查
 
@@ -126,6 +193,8 @@ python scripts/kicad_io.py loadable <path>        # 能否被解析（rc=2 表�
 | 丝印压到焊盘上 | `silk_lines()` 的 `COPPER_CLR` / `SILK_W` |
 | 外框形状不对 | `courtyard_cross()`（**不能**因为 PY<by 就把 PY 拉平） |
 | 生成的符号/封装 KiCad 加载不了 | `emit_symbol()` / `emit_footprint()` 的 token |
+| 四角的引脚名叠在一起 | `layout_symbol()` 的四角净空段（常数在 `shared/kitext.py`）|
+| 引脚全掉在 50 mil 栅格外 | `layout_symbol()` 末尾的 `hw` 向上取整 |
 | 版本号不对 | `kicad_io.probe_formats()` |
 
 ## 一次完整的流程

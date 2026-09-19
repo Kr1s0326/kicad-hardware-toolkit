@@ -115,6 +115,57 @@ def qfp_spec(n=12, body=7.0, span=8.4, pad_l=1.5, pad_w=0.25, pitch=0.5):
     }
 
 
+def wlcsp_spec():
+    """Infineon SG-XFWLB-49（PSoC 62 MCU，49 球交错 WLCSP）的真实数据。
+
+    球名用真件的 JEDEC 名，A1 是空位（图纸注 8）。行距是 0.280 / 0.341
+    交替的 —— 这正是交错阵列的要害，单个 row_pitch 表达不了。
+    """
+    balls = []
+    for i, r in enumerate("ABCDEFGHJ", start=1):
+        for c in range(1, 12):
+            if (i + c) % 2 or (r == "A" and c == 1):
+                continue
+            balls.append("%s%d" % (r, c))
+    pins = [{"number": b, "name": b, "etype": "passive",
+             "side": "left" if k < 25 else "right",
+             "group": "A" if k < 25 else "B"} for k, b in enumerate(balls)]
+    return {
+        "library": "W", "symbol": "W", "footprint": "WLCSP49",
+        "reference": "U", "description": "d", "datasheet": "u",
+        "symbol_style": {"pitch_mil": 100, "group_gap_mil": 200,
+                         "pin_length_mil": 100, "body_half_width_mil": 400,
+                         "top_margin_mil": 100, "font": 1.27,
+                         "side_align": "top"},
+        "pins": pins,
+        "groups": {"left": ["A"], "right": ["B"]},
+        "package": {
+            "family": "grid_array",
+            "row_letters": "ABCDEFGHJ",
+            "row_y": [-1.242, -0.962, -0.682, -0.341, 0.0,
+                      0.341, 0.682, 0.962, 1.242],
+            "col_pitch": 0.21, "col_zero": 6,
+            "pitch": 0.42, "pad_dia": 0.22, "ball_dia": 0.218,
+            "array_w": 2.100, "array_h": 2.484,
+            "matrix_cols": 11, "matrix_rows": 9,
+            "row_spans": [
+                {"symbol": "eE1s", "requirement": "0.56 BSC",
+                 "nominal": 0.560, "from": "G", "to": "J"},
+                {"symbol": "eE2s", "requirement": "0.621 BSC",
+                 "nominal": 0.621, "from": "F", "to": "H"},
+                {"symbol": "eE3s", "requirement": "0.682 BSC",
+                 "nominal": 0.682, "from": "E", "to": "G"}],
+            "diag_min": 0.350, "diag_max": 0.4005,
+            "sd": 0.21, "se": 0.00,
+            "body": {"w": 2.8819, "h": 3.1024},
+            "height_req": "MAX 0.467",
+            "ball_req": "0.188 / 0.218 / 0.248",
+            "solder_mask_margin": 0.02,
+            "descr": "", "tags": "", "model": "",
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # 工具
 # ---------------------------------------------------------------------------
@@ -146,6 +197,44 @@ def lines_on(text, layer):
         m = re.search(r'\(start ([-\d.]+) ([-\d.]+)\)\s*\(end ([-\d.]+) ([-\d.]+)\)', b)
         if m:
             out.append(tuple(round(float(g), 4) for g in m.groups()))
+    return out
+
+
+def ball_pads_of(text):
+    """球名焊盘 -> {name: (x, y, dia)}。焊盘号是字母+数字，不是纯数字。"""
+    return {m.group(1): (float(m.group(2)), float(m.group(3)), float(m.group(4)))
+            for m in re.finditer(r'\(pad "([A-Z]+\d+)" smd circle\s*'
+                                 r'\(at ([\-\d.]+) ([\-\d.]+)\)\s*'
+                                 r'\(size ([\d.]+) [\d.]+\)', text)}
+
+
+def extent_on(text, layer):
+    """某一层上所有线段/矩形的包围盒 -> (xmin, ymin, xmax, ymax)。
+
+    外框发的是 4 条 fp_line（不是 fp_rect）—— 形状一样，所以量包围盒而不是
+    认 token。刻意的：校验侧量的也是几何，不是 token 类型。
+    """
+    xs, ys = [], []
+    for kind in ("fp_line", "fp_rect"):
+        for blk in text.split("(" + kind)[1:]:
+            b = blk.split("(fp_")[0]
+            if '"%s"' % layer not in b:
+                continue
+            for m in re.finditer(r'\((?:start|end) ([\-\d.]+) ([\-\d.]+)\)', b):
+                xs.append(float(m.group(1)))
+                ys.append(float(m.group(2)))
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def polys_on(text, layer):
+    out = []
+    for blk in text.split("(fp_poly")[1:]:
+        b = blk.split("(fp_")[0]
+        if '"%s"' % layer in b:
+            out.append([(float(a), float(c)) for a, c in
+                        re.findall(r'\(xy ([\-\d.]+) ([\-\d.]+)\)', b)])
     return out
 
 
@@ -411,6 +500,88 @@ def test_quad_body_and_fields(tmp):
               % (key, vy, min(ys), max(ys)), ok)
 
 
+def test_grid_array(tmp):
+    """球栅阵列（WLCSP）。加到 make_part.py 之前，这一族根本没有生成器。"""
+    r = gen(wlcsp_spec(), os.path.join(tmp, "g"))
+    t = read(r["fp"])
+    p = ball_pads_of(t)
+    check("grid", "焊盘数 = 49（50 位减 A1 空位）", len(p) == 49, str(len(p)))
+    check("grid", "★ A1 是空位（图纸注 8 的 + 标记）", "A1" not in p)
+    check("grid", "★ 全部圆焊盘 + pad_prop_bga（官方 WLCSP 同款）",
+          t.count("smd circle") == 49 and t.count("pad_prop_bga") == 49,
+          "circle=%d bga=%d" % (t.count("smd circle"), t.count("pad_prop_bga")))
+    check("grid", "焊盘直径 = 0.22（标称球径 0.218）",
+          all(abs(v[2] - 0.22) < 1e-9 for v in p.values()))
+
+    # 坐标从球名解出来：x = (列 - 6) * 0.21, y = row_y[行]
+    # 俯视图里列号往右递增，所以 A3 在左上、A11 在右上（A1 是空位）。
+    check("grid", "A3 在 (-0.63, -1.242)（左上）",
+          p.get("A3", ())[:2] == (-0.63, -1.242), str(p.get("A3")))
+    check("grid", "A11 在 (1.05, -1.242)（右上）",
+          p.get("A11", ())[:2] == (1.05, -1.242), str(p.get("A11")))
+    check("grid", "C1 在 (-1.05, -0.682)",
+          p.get("C1", ())[:2] == (-1.05, -0.682), str(p.get("C1")))
+    check("grid", "J11 在 (1.05, 1.242)",
+          p.get("J11", ())[:2] == (1.05, 1.242), str(p.get("J11")))
+
+    xs = [v[0] for v in p.values()]
+    ys = [v[1] for v in p.values()]
+    check("grid", "D1 阵列跨距 = 2.100", abs(max(xs) - min(xs) - 2.100) < 1e-9,
+          "%.4f" % (max(xs) - min(xs)))
+    check("grid", "E1 阵列跨距 = 2.484", abs(max(ys) - min(ys) - 2.484) < 1e-9,
+          "%.4f" % (max(ys) - min(ys)))
+    rowA = sorted(v[0] for k, v in p.items() if k[0] == "A")
+    check("grid", "同排相邻球心距 = eD 0.42（交错阵列里跨两格）",
+          all(abs(b - a - 0.42) < 1e-9 for a, b in zip(rowA, rowA[1:])), str(rowA))
+
+    # 外框：官方 grid_array 生成器在 WLCSP-20/35/64 上量的都是矩形 + 本体 1.0/边。
+    # 本 toolkit 的 peripheral 族是 12 段十字 + 0.25 —— 两族确实不一样，别抄错。
+    cr = extent_on(t, "F.CrtYd")
+    check("grid", "★ 外框是矩形（不是 12 段十字）",
+          len(lines_on(t, "F.CrtYd")) == 4, str(len(lines_on(t, "F.CrtYd"))))
+    hx, hy = 2.8819 / 2, 3.1024 / 2
+    check("grid", "外框 = 本体/2 + 1.0（IPC-7351 标称）",
+          cr is not None and all(abs(a - b) < 1e-9 for a, b in
+                                 zip(cr, (-hx - 1.0, -hy - 1.0, hx + 1.0, hy + 1.0))),
+          str(cr))
+
+    # Fab 倒角 = 0.5 * min(本体半宽, 本体半高)，官方三个 WLCSP 都是这个
+    fab = polys_on(t, "F.Fab")
+    check("grid", "Fab 有 1 个多边形", len(fab) == 1, str(len(fab)))
+    if fab:
+        ch = 0.5 * min(hx, hy)                       # 0.720475
+        want = [(-hx + ch, -hy), (hx, -hy), (hx, hy), (-hx, hy), (-hx, -hy + ch)]
+        ok = (len(fab[0]) == 5 and
+              all(abs(a - b) < 1e-6 for pt, wt in zip(fab[0], want)
+                  for a, b in zip(pt, wt)))
+        check("grid", "★ Fab 倒角 = 0.5*min(半宽,半高) = 0.720475", ok, str(fab[0]))
+
+    check("grid", "阻焊开窗余量 0.02 写进封装", "(solder_mask_margin 0.02)" in t)
+
+    fs = json.load(open(r["fp_spec"], encoding="utf-8"))
+    kinds = [x["kind"] for x in fs["rows"]]
+    check("grid", "fp.spec family = grid_array", fs["family"] == "grid_array",
+          str(fs["family"]))
+    for k in ("array_w", "array_h", "matrix_cols", "matrix_rows", "count",
+              "dia", "pitch", "row_span", "diag_min", "diag_max", "sd", "se"):
+        check("grid", "fp.spec 有 kind=%s" % k, k in kinds, str(kinds))
+    rs = [x for x in fs["rows"] if x["kind"] == "row_span"]
+    check("grid", "三行 row_span 都带 from/to",
+          len(rs) == 3 and all(x.get("from") and x.get("to") for x in rs),
+          str([(x["symbol"], x.get("from"), x.get("to")) for x in rs]))
+
+
+def test_grid_rejects_garbage(tmp):
+    """球名解不出来要报错，不能默默画到 (0,0) 上去。"""
+    spec = wlcsp_spec()
+    spec["pins"][0] = dict(spec["pins"][0], number="PIN1")
+    try:
+        gen(spec, os.path.join(tmp, "bad"))
+        check("grid_err", "非法球名必须抛错", False, "居然生成成功了")
+    except ValueError as e:
+        check("grid_err", "非法球名抛 ValueError 并点名", "PIN1" in str(e), str(e))
+
+
 def test_idempotent(tmp):
     a = gen(vssop_spec(), os.path.join(tmp, "i1"))
     b = gen(vssop_spec(), os.path.join(tmp, "i2"))
@@ -423,7 +594,8 @@ def main():
     pat = sys.argv[1] if len(sys.argv) > 1 else ""
     tmp = tempfile.mkdtemp(prefix="mkpart_selftest_")
     for fn in (test_pads, test_silk_courtyard, test_symbol_layout, test_quad,
-               test_quad_body_and_fields, test_grid_warning, test_idempotent):
+               test_quad_body_and_fields, test_grid_warning, test_grid_array,
+               test_grid_rejects_garbage, test_idempotent):
         if pat and pat not in fn.__name__:
             continue
         try:

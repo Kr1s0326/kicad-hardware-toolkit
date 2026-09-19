@@ -199,8 +199,16 @@ def main():
             k = nl["pins"].get(n, "")
             e = er["pins"].get(n, {})
             name_ok = norm(p.get("name", "")) == norm(k) if p and k else False
-            type_ok = (p.get("etype") == e.get("etype")) if p and e else False
-            if not (name_ok and type_ok):
+            # 三态：True 对 / False 错 / None 要求一侧未声明。
+            # 手册不给 TYPE 列时（很多 MCU 的引脚表就只有球号 + 信号名），
+            # 拿 None 去比 ERC 推导出的类型会**每个引脚都报 NG**，汇总变成
+            # “49/49 不一致”，而名字其实全对。假 NG 比不查更糟。
+            want_t = p.get("etype") if p else None
+            if want_t in (None, "", "-"):
+                type_ok = None if (p and e) else False
+            else:
+                type_ok = (want_t == e.get("etype")) if (p and e) else False
+            if not name_ok or type_ok is False:
                 bad += 1
             cmp_rows.append({"pin": n, "pdf_name": p.get("name", "-"),
                              "netlist_name": k or "-",
@@ -215,7 +223,7 @@ def main():
                   % (c["pin"], c["pdf_name"], c["netlist_name"],
                      "ok" if c["name_ok"] else "NG",
                      c["pdf_etype"], c["erc_etype"],
-                     "ok" if c["type_ok"] else "NG"))
+                     {True: "ok", False: "NG", None: "未声明"}[c["type_ok"]]))
         json.dump(cmp_rows, open(os.path.join(out, "cmp_pins.json"), "w",
                                  encoding="utf-8"), ensure_ascii=False, indent=2)
         # 引脚比对表（xlsx）—— 与封装侧的尺寸测量表同一套样式与判定习惯
@@ -231,6 +239,7 @@ def main():
                 "规格检查（间距 / 分组 / 栅格 / 本体）的结果在 lint.txt 与 EVIDENCE.md 里。",
             ])
         print("  引脚比对表:", xlsx)
+        n_na = sum(1 for c in cmp_rows if c["type_ok"] is None)
         ev("引脚比对表(xlsx)",
            "PASS" if bad == 0 else "NG",
            "pdfplumber 读手册 -> 网表名 + ERC 类型（都不读我的 .kicad_sym）",
@@ -238,7 +247,10 @@ def main():
         ev("手册比对(号/名/电气类型)",
            "PASS" if bad == 0 else "NG",
            "同上，明细见引脚比对表",
-           "%d/%d 引脚不一致" % (bad, len(nums)))
+           "%d/%d 引脚不一致%s"
+           % (bad, len(nums),
+              "；%d 项电气类型未声明（要求表没有类型列），未参与判定" % n_na
+              if n_na else ""))
     else:
         print("\n(未给 --pdf：跳过与手册的比对 —— 这是最重要的一条，建议补上)")
         ev("引脚比对表(xlsx)", "未做", "-", "需要 --pdf（没有手册就没有「要求」一列）")

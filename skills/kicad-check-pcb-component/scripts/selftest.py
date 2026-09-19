@@ -482,8 +482,56 @@ def test_pad_shape_and_panels():
                 dim_calls("lead_length", _w), [("v" if _tb else "h", round(_w, 6))])
 
 
+def test_drc_pad_clearance_rule():
+    """焊盘短路间距规则必须从 spec（要求侧）推出。
+
+    0.4mm 节距的 WLCSP：相邻球心 0.35mm、焊盘 0.22mm，边到边只剩 0.13mm。
+    KiCad 默认的 0.2mm 网络间距拿上去跑，会报 79 项“间距违规” ——
+    而那是一族封装根本达不到的要求，那 79 项一个缺陷都不是。
+
+    关键：下界取自 **spec** 而不是被测封装自己。取自封装自己的话
+    规则永远成立，DRC 就退化成空跑。
+    """
+    from core import spec as S
+    grid = {"rows": [
+        {"kind": "dia", "nominal": 0.218},
+        {"kind": "diag_min", "nominal": 0.350},
+        {"kind": "pitch", "nominal": 0.420},
+    ]}
+    # 最近的两个球是斜向的 -> 用 diag_min，不是 pitch
+    check("drc/pad_gap: WLCSP 取斜向球距", S.min_pad_gap(grid), 0.350 - 0.218, 1e-9)
+
+    per = {"rows": [
+        {"kind": "lead_width", "nominal": 0.30},
+        {"kind": "lead_pitch", "nominal": 0.50},
+    ]}
+    check("drc/pad_gap: 引脚族取同侧节距-脚宽",
+          S.min_pad_gap(per), 0.500 - 0.300, 1e-9)
+
+    check_exact("drc/pad_gap: 没有可用的 kind -> None",
+                S.min_pad_gap({"rows": [{"kind": "body_w", "nominal": 3.0}]}),
+                None)
+    check_exact("drc/pad_gap: rows 缺失 -> None", S.min_pad_gap({}), None)
+
+    # 规则文件：值要比 spec 算出来的略低（KiCad 判 actual < min，浮点末位
+    # 会让正好相等的情况误报），但低得不能多，否则放过真问题。
+    import tempfile
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "board.kicad_pcb")
+    open(p, "w").write("")
+    dru = S.write_dru(p, 0.130)
+    check_exact("drc/dru: 写在 <board>.kicad_dru（KiCad 自动加载）",
+                os.path.basename(dru), "board.kicad_dru")
+    txt = open(dru, encoding="utf-8").read()
+    check("drc/dru: 约束写成 0.125mm（0.130 - 5um）",
+          "(min 0.125mm)" in txt, True)
+    check("drc/dru: 只限 Pad-Pad，不放过其他间距",
+          "A.Type == 'Pad' && B.Type == 'Pad'" in txt, True)
+
+
 TESTS = [
     ("core: gerber parser", test_gerber_parser),
+    ("drc: pad clearance rule", test_drc_pad_clearance_rule),
     ("core: pad classification", test_classify),
     ("core: family dispatch", test_family_dispatch),
     ("family: grid_array (WLCSP)", test_grid_array),
