@@ -1,193 +1,229 @@
 # kicad-hardware-toolkit
 
-从**一份数据手册**生成 KiCad 元件库，并且**独立地证明它是对的**。
+从数据手册生成 KiCad 元件（原理图符号 + PCB 封装），并对产物做独立校验。
 
 ```
-数据手册 PDF ──┐
-              ├─> kicad-create-lib-part ──> .kicad_sym + .kicad_mod
-封装图纸 ─────┘                              │
-                                            ├─> kicad-check-sch-component  (符号校验)
-                                            └─> kicad-check-pcb-component  (封装校验)
+part_spec.json ──> kicad-create-lib-part ──┬──> LIB.kicad_sym
+   ▲                                       ├──> LIB.pretty/FP.kicad_mod
+   │                                       ├──> LIB.groups.json      ─┐
+ 数据手册                                   └──> LIB.fp.spec.json    ─┤
+                                                                    │
+                          LIB.kicad_sym   ──> kicad-check-sch-component
+                          LIB.kicad_mod   ──> kicad-check-pcb-component
 ```
 
-## 三个 skill
+校验脚本以 Gerber、Excellon、网表、STEP 模型为输入，不读生成器写出的文本本身。
 
-| skill | 干什么 | 边界 |
+## 组件
+
+| 组件 | 职责 | 不做 |
 |---|---|---|
-| `kicad-create-lib-part` | 从 `part_spec.json` 生成原理图符号 + PCB 封装 + 两者的链接 | **只保证"能被 KiCad 加载"** |
-| `kicad-check-sch-component` | 校验符号：规矩 / 网表 / ERC / 手册比对 / 目视 / 引脚契约 | **只做正确性判断** |
-| `kicad-check-pcb-component` | 校验封装：Gerber 量测 / DRC / 3D 实物贴合 / 目视 / 引脚契约 | **只做正确性判断** |
+| `kicad-create-lib-part` | 由 `part_spec.json` 生成 `.kicad_sym`、`.kicad_mod`、以及校验所需的 `groups.json` / `fp.spec.json` | 不做正确性判断，不含任何渲染代码 |
+| `kicad-check-sch-component` | 校验符号：绘制规范、网表、ERC、与手册比对、渲染、引脚契约 | 不生成任何文件 |
+| `kicad-check-pcb-component` | 校验封装：Gerber 量测、DRC、3D 实物贴合、渲染、引脚契约 | 不生成任何文件 |
 
-### 为什么创建和校验是分开的
+生成器与校验器分离是硬约束：若生成侧也做"看着没问题"的判断，校验即退化为自证。
+生成器只保证产物能被 `kicad-cli` 加载。
 
-> **创建保证"可加载"，校验保证"正确"。**
+## 校验通路
 
-如果创建侧也开始"看完图觉得没问题"，校验就退化成**自证** —— 拿自己刚写的东西
-验自己。这是正确性风险，不是臃肿问题。所以 `kicad-create-lib-part` 里
-**一行渲染代码都没有**。
+封装校验由五条互不重叠的通路组成。任一条单独运行都无法发现其余通路能发现的问题。
 
-### 为什么校验是四条通路
+| 通路 | 输入 | 可发现的缺陷 |
+|---|---|---|
+| 量测 | Gerber / Excellon 反解 | 焊盘尺寸、跨距、间距错误 |
+| 规则 | `kicad-cli pcb drc` | 丝印压阻焊、外框缺失或过小、间距不足 |
+| 实物 | `kicad-cli pcb render` + STEP 模型 | 图纸数字与实际器件不符 |
+| 目视 | SVG 转 PNG 后人工查看 | 布局意图类错误（唯一覆盖此类的通路） |
+| 契约 | 焊盘号与符号引脚号交叉 | 两侧编号不一致 |
 
-**任何一条单独跑，都发现不了另外几条能发现的问题。**
+符号校验的通路为：绘制规范（纯几何）、`sch export netlist`、`sch erc`、与手册
+Table 5-1 三方比对、渲染目视。其中 ERC 是唯一能发现电气类型错误的手段
+（类型写错不影响任何几何量测）。
 
-| 通路 | 手段 | 抓什么 | 抓不到 |
-|---|---|---|---|
-| A 量测 | Gerber/Excellon 反解 | 焊盘/跨距/间距 的数字错 | 丝印压盘、Pin1 画反、引脚悬空 |
-| B 规则 | `pcb drc` / `sch erc` | 丝印压阻焊、外框缺失、**引脚电气类型错** | 数字错（规则不知道图纸） |
-| C 3D/网表 | 真实 STEP 压焊盘 / KiCad 自己导的网表 | 图纸数字不是这颗实物 / 结构错 | 布局意图 |
-| D 目视 | kicad-cli 出 SVG → PNG，人看 | **布局意图类错误**（唯一能覆盖这类的手段） | 需要人 |
-| E 契约 | 引脚号 ↔ 焊盘号 交叉 | 两边编号对不上 | 名字、类型 |
+验收要求：未查看渲染图不得声称"已验证"。查看清单见
+[`shared/render-and-look.md`](shared/render-and-look.md)。
 
-**铁律：没看过图，不许说"已验证"。** 详见 [`shared/render-and-look.md`](shared/render-and-look.md)。
+## 环境要求
+
+| 依赖 | 用途 | 获取方式 |
+|---|---|---|
+| Python ≥ 3.9 | 全部脚本 | — |
+| `kicad-cli` ≥ 8 | Gerber/网表导出、DRC/ERC、3D 渲染 | 随 KiCad 安装 |
+| Chromium 内核浏览器 | SVG 转 PNG（无头模式） | Chrome 或 Edge |
+| `pdfplumber` | 从手册 PDF 抽取引脚表 | `pip install -r requirements.txt` |
+| `openpyxl` | 尺寸测量表输出 | 同上 |
+| `Pillow` | 测量图绘制与拼接 | 同上 |
+
+工具路径自动探测，可用 `KICAD_CLI` / `CHROME` 覆盖。设置的值无效时脚本直接报错，
+不回退到自动探测。
+
+```bash
+python shared/toolchain.py        # 打印探测到的路径
+```
 
 ## 安装
 
-### 作为 pi 包
+pi：
 
 ```bash
 pi install /path/to/kicad-hardware-toolkit
 ```
 
-### 给其他 Agent Skills 实现（Claude Code / Codex / …）
-
-三个 skill 就是标准的 Agent Skills 目录结构（`SKILL.md` + `scripts/` + `references/`），
-直接挂到对应 harness 的 skills 目录即可：
+其他 Agent Skills 实现（Claude Code / Codex 等）—— 三个 skill 使用标准目录结构，
+指向即可：
 
 ```bash
-ln -s /path/to/kicad-hardware-toolkit/skills/kicad-create-lib-part   ~/.claude/skills/
+ln -s /path/to/kicad-hardware-toolkit/skills/kicad-create-lib-part ~/.claude/skills/
 ```
 
-### 不用 AI，终端直接跑
+不使用 agent 时可直接调用脚本，见下节。
 
-脚本是普通 Python，只依赖 `kicad-cli`：
+## 使用
 
-```bash
-pip install -r requirements.txt
+### 1. 编写 spec
 
-python shared/render.py which          # 检查 kicad-cli / chrome 是否找得到
-python skills/kicad-create-lib-part/scripts/make_part.py spec.json --outdir out --verify
-```
+以 `skills/kicad-create-lib-part/assets/part_spec_template.json` 为模板。
+三个部分需要人工从图纸录入：
 
-## 依赖
+- `pins[]` —— 手册 Pin Functions 表的引脚号、名称、电气类型、所在边
+- `groups{}` —— 功能分组（手册不提供此信息，须人工判断）
+- `package{}` —— 手册 Package Outline 与 Example Board Layout 的尺寸
 
-| 依赖 | 用途 | 备注 |
-|---|---|---|
-| `kicad-cli` | Gerber/网表导出、DRC/ERC、3D 渲染 | 随 KiCad 安装 |
-| chrome / edge | 无头模式把 SVG 转 PNG | 渲染目视那一步需要 |
-| `pdfplumber` | 从手册 PDF 抽引脚表 | |
-| `openpyxl` | 尺寸测量表 xlsx | |
-| `Pillow` | 渲染图拼接 | |
+组内顺序由 `pins[]` 的书写顺序决定，组间顺序由 `groups{}` 决定。
 
-路径可用环境变量覆盖：`KICAD_CLI=...`、`CHROME=...`。
-
-## 一次完整流程
+### 2. 生成
 
 ```bash
 TK=/path/to/kicad-hardware-toolkit
-
-# 1) 写 spec（引脚表来自手册，封装数字来自封装图）
-cp $TK/skills/kicad-create-lib-part/assets/part_spec_template.json my_part.json
-#    填 pins[] / groups{} / package{}
-
-# 2) 生成
-python $TK/skills/kicad-create-lib-part/scripts/make_part.py my_part.json --outdir out --verify
-#    产出 symbol + footprint + groups.json + fp.spec.json
-
-# 3) 校验（两条命令，--verify 会直接打出来）
-python $TK/skills/kicad-check-sch-component/scripts/check_symbol.py \
-       out/LIB/LIB.kicad_sym --outdir chk --pdf ds.pdf \
-       --groups out/LIB.groups.json --footprint out/LIB.pretty/FP.kicad_mod
-
-python $TK/skills/kicad-check-pcb-component/scripts/check_footprint.py \
-       out/LIB.pretty/FP.kicad_mod --outdir chk2 --spec out/LIB.fp.spec.json \
-       --symbol out/LIB/LIB.kicad_sym
-
-# 4) 看图（必做）
-#    chk/look_sheet.png   chk2/look_sheet.png   chk2/fit3d_*.png
+python $TK/skills/kicad-create-lib-part/scripts/make_part.py spec.json --outdir out --verify
 ```
 
-## 这个工具箱里最该知道的三件事
+`--verify` 调用 `kicad-cli` 确认产物可加载，并打印后续校验命令。
 
-### 1. 「组间 400 mil」几何上不可判
+### 3. 校验
 
-左 `VBUS(12.7) ─400mil─ IN+(2.54) ─200mil─ IN−(−2.54)`
-把 `IN+` 提到 7.62 就变成 `200mil / 400mil` —— 两种**都满足**"组内 200 / 组间 400"。
+```bash
+python $TK/skills/kicad-check-sch-component/scripts/check_symbol.py \
+       out/LIB/LIB.kicad_sym --outdir chk_sch \
+       --pdf datasheet.pdf --groups out/LIB.groups.json \
+       --footprint out/LIB.pretty/FP.kicad_mod
 
-所以**分组是输入**（`groups.json`），不是推断出来的。不给分组时工具会明确说
-"该规则无法真正校验"，而不是假装通过。给了之后还会把**几何推断的分组**和
-**声明的分组**对账。
+python $TK/skills/kicad-check-pcb-component/scripts/check_footprint.py \
+       out/LIB.pretty/FP.kicad_mod --outdir chk_pcb \
+       --spec out/LIB.fp.spec.json --symbol out/LIB/LIB.kicad_sym
+```
 
-### 2. 创建的产物必须交出"要求"
+两个命令各产出一份 `EVIDENCE.md`（逐项结论与数据来源）和 `look_sheet.png`
+（所有图拼成一张）。审阅 `look_sheet.png`、`fit3d_*.png` 后再下结论。
 
-`make_part.py` 会顺手生成 `groups.json` 和 `fp.spec.json` 交给校验侧。
-但校验侧的量测**从不读这两个文件里的实测值** —— 它反解 Gerber / 网表。
-这样"要求"和"实测"始终是两个独立来源。
+## 退出码
 
-### 3. `kicad-cli` 的判定不能只看返回码
+| 脚本 | 0 | 非 0 |
+|---|---|---|
+| `make_part.py` | 成功 | 2 输入/参数错误；3 产物无法被 kicad-cli 加载 |
+| `check_footprint.py` | 全部通过 | 6 存在 NG 项 |
+| `check_symbol.py` | 全部通过 | 9 存在 NG 项 |
+| `measure_component.py` | 无 NG 行 | 1 有 NG 行；2 找不到 Gerber |
+| `drc.py` | 无相关违规 | 6 存在违规 |
+| `fit3d.py` | 已渲染 3D 贴合图 | 7 STEP 模型缺失（不渲染） |
+| `pinmap.py` | 编号一一对应 | 8 不一致 |
+| `symbol_lint.py` | 无 FAIL | 1 存在 FAIL |
+| `pdf_pins.py` | 引脚类型全已映射 | 1 存在未映射项 |
+| `selftest.py`（三个） | 全部通过 | 1 存在失败用例 |
 
-- `pcb drc` 有违规时返回码也可能是 0（除非加 `--exit-code-violations`）
-- 加载失败返回 2，但成功时的消息是"未更新"
+所有入口的未捕获异常统一由 `shared/cli.py` 转换为可读信息并返回 2；
+加 `--traceback` 或设 `TOOLKIT_TRACEBACK=1` 可取完整堆栈。
 
-所以判定一律同时看 rc **和**消息文本。
+## 设计约定
 
-## 目录
+以下三条影响使用方式，非实现细节。
+
+**分组必须显式声明。** "组间 400 mil" 这条规则在几何上不可判定：左侧
+`VBUS(12.7) ─400mil─ IN+(2.54) ─200mil─ IN−(−2.54)` 中将 `IN+` 移至 7.62，
+即变为 `200mil / 400mil`，两种排列都满足"组内 200 / 组间 400"，仅分组不同。
+因此分组是输入而非推断结果。未提供分组时脚本会明确报告该规则未校验，
+并把几何推断出的分组与声明的分组对账，不一致即判 FAIL。
+
+**间距取值须为 100 mil 的整数倍。** 顶对齐时首个引脚的 y 坐标为最大跨度的一半。
+`pitch_mil=150` / `group_gap_mil=300` 会产生 9.525 mm，不在 50 mil 连接栅格上，
+导致引脚无法连线，而符号外观完全正常。`make_part.py` 生成后会自检并告警。
+
+**判定同时依据返回码与输出文本。** `kicad-cli pcb drc` 在存在违规时返回码可能为 0
+（除非加 `--exit-code-violations`）；加载失败返回 2，成功时输出"未更新"。
+仅凭返回码会漏判。
+
+## 目录结构
 
 ```
 kicad-hardware-toolkit/
 ├── package.json                    pi 包清单
 ├── requirements.txt
-├── .github/workflows/test.yml      CI：3 个 selftest + pyflakes + frontmatter 校验
-├── shared/                         共享代码，只有一份
-│   ├── toolchain.py                外部工具定位（kicad-cli / chrome / KiCad share）
-│   ├── cli.py                      入口统一错误处理 + 退出码
-│   ├── render.py                   渲染：SVG→PNG / 3D
-│   ├── pinmap.py                   引脚↔焊盘 契约
-│   └── render-and-look.md          看图清单与结论措辞规范
+├── .github/workflows/test.yml      CI
+├── shared/                         两个校验 skill 共用，各一份
+│   ├── toolchain.py                外部工具定位
+│   ├── cli.py                      入口错误处理与退出码
+│   ├── render.py                   渲染：SVG→PNG、3D
+│   ├── pinmap.py                   引脚↔焊盘契约
+│   └── render-and-look.md          目视清单与结论措辞规范
 └── skills/
     ├── kicad-create-lib-part/
     │   ├── SKILL.md
     │   ├── assets/part_spec_template.json
-    │   ├── references/{symbol-rules,footprint-rules,kicad-formats,datasheet-extract}.md
-    │   └── scripts/{make_part,kicad_io}.py
+    │   ├── references/             symbol-rules, footprint-rules,
+    │   │                           kicad-formats, datasheet-extract
+    │   └── scripts/                make_part.py, kicad_io.py, selftest.py
     ├── kicad-check-sch-component/
     │   ├── SKILL.md
     │   ├── assets/groups_template.json
     │   ├── references/checks.md
-    │   └── scripts/{check_symbol,symbol_lint,sch_build,sch_netlist,sch_erc,pdf_pins}.py
+    │   └── scripts/                check_symbol, symbol_lint, sch_build,
+    │                               sch_netlist, sch_erc, pdf_pins, selftest
     └── kicad-check-pcb-component/
         ├── SKILL.md
         ├── references/families.md
-        └── scripts/{check_footprint,measure_component,drc,fit3d,
-                     selftest,build_testboards,crop_spec_table}.py
-            └── core/{gerber,geometry,spec,draw,common,report,board}.py
-            └── families/{grid_array,peripheral,chip}.py
+        └── scripts/
+            ├── check_footprint, measure_component, drc, fit3d,
+            │   selftest, build_testboards, crop_spec_table
+            ├── core/               gerber, geometry, spec, draw,
+            │                       common, report, board
+            └── families/           grid_array, peripheral, chip
 ```
 
-## 自测
+`core/` 与封装类型无关；`families/` 按封装族划分（网格阵列 / 边引脚 / 两端子），
+定位问题时据此缩小范围。
 
-三个 selftest 都**不需要 CAD、秒级**；量测用例纯标准库，
-只有"画图不能崩"那部分要 Pillow（没装就标成跳过，不假装通过）：
+## 测试
+
+三个 selftest 不需要 CAD 文件与网络。量测用例仅依赖标准库；
+绘制相关用例需要 Pillow，缺失时标记为跳过而非通过。
 
 ```bash
 python skills/kicad-check-pcb-component/scripts/selftest.py    # 75 项
-python skills/kicad-check-sch-component/scripts/selftest.py    # 22 项
+python skills/kicad-check-sch-component/scripts/selftest.py    # 24 项
 python skills/kicad-create-lib-part/scripts/selftest.py        # 50 项
-python skills/kicad-check-pcb-component/scripts/build_testboards.py --run --3d  # 真实库集成测试
 ```
 
-CI 每次 push 自动跑这三个 + pyflakes + skill frontmatter 校验。
+针对真实 KiCad 库封装的集成测试（需要 KiCad）：
 
-## 已知边界（做不到的）
+```bash
+python skills/kicad-check-pcb-component/scripts/build_testboards.py /tmp/tb --run --3d
+```
 
-* **没有实物验证。** 最终确认还是要把芯片真贴上去。
-* **图纸抄录风险仍在。** 量测只能证明"封装 = spec"。spec 里录错了，量测会一致地 PASS。
-  所以 spec 里每个数字旁边都注明来自哪张图的哪个标注。
-* **符号的跨引脚电气冲突**（两个输出短接这类）还没查 —— 现在是"孤立符号 ERC +
-  电气类型提取"，要做需要搭测试台原理图。
-* **四边封装（QFP/QFN）已有 selftest 覆盖**，但还没有拿真实厂家的 QFP 图纸
-  （而不只是合成参数）走一遍完整流程。
-* **Z 向尺寸测不了**（2D Gerber 没有该方向几何），一律报"待测"。
+CI 在每次 push 时运行上述三个 selftest、pyflakes，以及 SKILL.md frontmatter 校验
+（名称须为小写连字符且与目录名一致 —— 这是 Agent Skills 标准的要求，pi 本身较宽松）。
 
-## License
+## 已知限制
+
+- **无实物验证。** 最终确认需要把器件焊到板上。
+- **图纸录入错误无法检出。** 量测只能证明"封装与 spec 一致"。若 spec 中的数值录入
+  有误，所有校验会一致通过。spec 中每个数值均注明来源图纸标注，是唯一的缓解手段。
+- **符号的跨引脚电气冲突未检查。** 当前为"孤立符号 ERC + 电气类型提取"，
+  检出短路类问题需要构造测试台原理图。
+- **四边封装（QFP / QFN）** 已有 selftest 覆盖，但尚未用真实厂家图纸走完整流程。
+- **Z 向尺寸不可测。** 2D Gerber 无该方向几何，一律报"待测"。
+- **封装族覆盖不均。** 边引脚与两端子族经真实数据回归；网格阵列族仅有合成测试。
+
+## 许可
 
 MIT

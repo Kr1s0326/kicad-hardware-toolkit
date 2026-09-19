@@ -94,10 +94,20 @@ def main():
     refs = model_refs(mod)
     print("model ref :", refs[0] if refs else "(封装没有挂 3D 模型)")
     ok = True
+    resolved = []
     for r in refs:
         p = resolve_model(r)
-        print("resolved  :", p if p else "** 找不到该 STEP -> 3D 贴合无法验证 **")
+        print("resolved  :", p if p else "** 找不到该 STEP **")
+        resolved.append(p)
         ok = ok and bool(p)
+
+    if not ok:
+        # 模型缺失时**不渲染**。渲染出来的是一张"零件不在上面"的图，
+        # 比没有图更危险 —— 有人会看一眼就以为对。
+        print("\n3D 贴合无法验证：STEP 模型缺失。"
+              "\n  修法：在封装里把 (model ...) 指向本机存在的步进文件，"
+              "或从 KiCad 官方库/厂商渠道补上模型。")
+        return 7
 
     pcb = a.board_out or os.path.join(a.outdir, "_fit_board.kicad_pcb")
     board_mod.write_pcb(pcb, mod, lib_id=a.lib_id)
@@ -115,7 +125,7 @@ def main():
                                  title="3D fit: real part model on this footprint's pads")
     print("sheet     :", sheet)
     print("\n请打开上面两张图确认：每条引脚都落在焊盘上，Pin1 标记对齐。")
-    sys.exit(0 if ok else 7)
+    return 0
 
 
 if __name__ == "__main__":

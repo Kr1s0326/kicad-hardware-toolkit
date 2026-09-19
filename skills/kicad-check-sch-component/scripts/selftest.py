@@ -177,6 +177,26 @@ def test_pitch_and_groups(tmp):
 
 
 # ---------------------------------------------------------------------------
+def test_groups_shape(tmp):
+    """形状不对的 groups.json 必须被当成"没给分组"并明确提示。
+
+    以前会被**静默忽略**：用户以为分组查过了，其实「组间 400 mil」根本没校验。
+    """
+    # lint() 层面：无法识别的边 -> declared.get(side) 是 None -> 与没给等价
+    pins = [("1", "A", "input", -7.62, 2.54, 0, 2.54),
+            ("2", "B", "input", -7.62, -2.54, 0, 2.54),
+            ("3", "C", "output", 7.62, 0.0, 180, 2.54)]
+    f = os.path.join(tmp, "shape.kicad_sym")
+    open(f, "w", encoding="utf-8").write(make_symbol(pins))
+    r = run(f, {"nonsense": [["A"]]})
+    check("groups_shape", "形状不对时不误报 group_gap",
+          "group_gap" not in [k for k, _ in r["issues"]],
+          str([k for k, _ in r["issues"]]))
+    check("groups_shape", "形状不对时标记 inferred_only（上层据此提示）",
+          all(g.get("inferred_only") for g in r["sides"].values()),
+          str(r["sides"]))
+
+
 def test_grid_duplicate_body(tmp):
     base = [("1", "A", "input", -7.62, 2.54, 0, 2.54),
             ("2", "B", "input", -7.62, -2.54, 0, 2.54),
@@ -270,8 +290,8 @@ def test_multi_unit(tmp):
 def main():
     pat = sys.argv[1] if len(sys.argv) > 1 else ""
     with tempfile.TemporaryDirectory() as tmp:
-        for fn in (test_pitch_and_groups, test_grid_duplicate_body, test_pins_of,
-                   test_multi_unit):
+        for fn in (test_pitch_and_groups, test_groups_shape,
+                   test_grid_duplicate_body, test_pins_of, test_multi_unit):
             if pat and pat not in fn.__name__:
                 continue
             try:

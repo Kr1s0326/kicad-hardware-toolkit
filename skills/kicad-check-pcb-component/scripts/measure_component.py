@@ -159,6 +159,11 @@ def main():
     if a.preview:
         png = report.preview_png(out, img_dir=img_dir)
         print("preview:", png)
+    # 退出码必须反映判定结果：有 NG 行就非 0。
+    # 以前这里不返回，于是 check_footprint 拿到 rc=0，NG 就传不出去 ——
+    # 8 行 NG 的封装照样"通过"。
+    n_ng = sum(1 for x in results if x == "NG")
+    return 1 if n_ng else 0
 
 
 if __name__ == "__main__":

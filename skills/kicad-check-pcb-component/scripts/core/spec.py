@@ -11,6 +11,7 @@ import glob
 import json
 import math
 import os
+import sys
 
 from core import gerber as G
 
@@ -123,7 +124,15 @@ def build_context(spec):
     ctx = {"files": {k: _resolve(spec, k) for k in FILE_ALIASES}}
     f = ctx["files"]
     if not f["cu"]:
-        raise SystemExit("no copper Gerber found - set gerber_dir or files.cu")
+        # 注意：SystemExit("字符串") 的退出码恒为 1，无法区分"输入错"和"有 NG 行"。
+        # 这里先把话说清楚，再用数字码退出。
+        print("找不到铜层 Gerber。\n"
+              "  gerber_dir = %s\n"
+              "  修法：先用 kicad-cli pcb export gerbers 导出，或把 spec 里的\n"
+              "       gerber_dir 指向已导出的目录；也可以直接跑\n"
+              "       check_footprint.py，它会自己建板并导出。"
+              % (spec.get("gerber_dir") or "(未设置)"), file=sys.stderr)
+        raise SystemExit(2)
 
     ap, pr = G.parse_gerber(f["cu"], flip_y=True)
     pads = G.flash_pads(ap, pr)

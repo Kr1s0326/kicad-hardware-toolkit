@@ -129,7 +129,13 @@ def main():
                  "--img-dir", os.path.join(out, "measure")])
         print(r.stdout or r.stderr)
         xlsx = os.path.join(out, title + "_report.xlsx")
-        ev("尺寸测量表", "见报告", "Gerber/Excellon 反解", xlsx)
+        # measure_component 有 NG 行时返回 1。**必须把结论传进 evidence**，
+        # 否则 N 行 NG 也会报"NG 项 0"，CI 直接放过。
+        n_ng = len([l for l in (r.stdout or "").splitlines()
+                    if l.rstrip().endswith("NG") or " NG " in l])
+        ev("尺寸测量表", "NG" if r.returncode else "PASS",
+           "Gerber/Excellon 反解",
+           "%d 行 NG  -> %s" % (n_ng, xlsx) if n_ng else xlsx)
         look += sorted(glob.glob(os.path.join(out, "measure", "meas_*.png")))[:6]
     else:
         print("(未给 --spec，跳过尺寸测量表)")

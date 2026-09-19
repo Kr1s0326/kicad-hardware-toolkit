@@ -141,6 +141,11 @@ def lint(sym_path, sym_name=None, min_pitch_mil=200.0, group_gap_mil=400.0,
     所以分组是**输入**，不是推断出来的；推断结果只用来对账。
     """
     name, body, pins, fields = parse_symbol(sym_path, sym_name)
+    # “有没有真的声明分组”——不是看 dec 存不存在，而是看里面有没有认得的边。
+    # 形状不对的文件如果当成“已声明”，就会静默跳过组间间距校验。
+    recognized = bool(declared) and any(
+        isinstance(declared.get(s), list)
+        for s in ("left", "right", "top", "bottom"))
     grid = grid_mil * MIL
     min_pitch = min_pitch_mil * MIL
     group_gap = group_gap_mil * MIL
@@ -243,11 +248,9 @@ def lint(sym_path, sym_name=None, min_pitch_mil=200.0, group_gap_mil=400.0,
                     issues.append(("groups",
                                    "%s 边几何上推断出的分组 %s ≠ 声明的分组 %s"
                                    % (side, inferred, dec)))
-        elif not declared:
-            # 没给分组：只能按启发式报，并明确说明这是推断
-            for g in inferred:
-                if len(g) > 1:
-                    pass
+        elif not recognized:
+            # 没给分组，或者给了但里面没有认得的边 -> 分组都是几何推断的。
+            # 上层据此提醒用户「组间间距」这条规则实际未校验。
             groups[side]["inferred_only"] = True
 
     # --- 本体
@@ -341,6 +344,14 @@ def main():
           % (mp, gg, a.grid, "  (取自 groups.json)" if style else ""))
 
     print("\n--- 各边间距 ---")
+    if dec is None:
+        print("  [!] 未提供 --groups：分组只能几何推断，"
+              "「组间 %g mil」这条规则**无法真正校验**" % gg)
+    elif not any(isinstance(dec.get(s), list) for s in
+                 ("left", "right", "top", "bottom")):
+        # 文件加载了但形状不对 -> 与没给等价，不能静默
+        print("  [!] --groups 里没有 left/right/top/bottom 任何一个，"
+              "等同于没给分组 —— 「组间 %g mil」这条规则**未校验**" % gg)
     for side, g in r["sides"].items():
         print("  %-6s 基础间距 %6.1f mil   相邻间距(mil): %s"
               % (side, g["base_pitch_mil"],

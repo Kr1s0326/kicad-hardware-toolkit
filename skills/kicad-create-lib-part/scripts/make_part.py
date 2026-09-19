@@ -548,7 +548,8 @@ def main():
         print("  python <kicad-check-pcb-component>/scripts/check_footprint.py %s \\"
               % r["fp"])
         print("         --outdir chk2 --spec %s" % r["fp_spec"])
-        return 2 if bad else 0
+        # 3 = 产物生成出来了但 kicad-cli 加载不了（区别于 2 = 输入/参数错）
+        return 3 if bad else 0
     return 0
 
 

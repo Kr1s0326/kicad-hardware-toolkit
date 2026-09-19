@@ -110,6 +110,14 @@ def main():
     if dec is None:
         print("  [!] 没给 --groups：分组只能几何推断，"
               "「组间 %g mil」这条规则**无法真正校验**" % group_gap)
+    elif not any(isinstance(dec.get(s), list) for s in
+                 ("left", "right", "top", "bottom")):
+        # 文件加载了但里面没有认得出来的边 -> 与没给等价。
+        # 不能静默：用户会以为分组查过了，实际根本没查。
+        print("  [!] --groups %s 里没有 left/right/top/bottom 任何一个，"
+              "等同于没给分组 —— 「组间 %g mil」这条规则**未校验**。\n"
+              "      正确的形状见 assets/groups_template.json"
+              % (os.path.basename(a.groups), group_gap))
     r = sl.lint(lib, a.symbol, min_pitch, group_gap, a.grid, declared=dec)
     lines = ["symbol: %s" % r["symbol"], "body: %s" % (r["body"],), ""]
     for side, g in r["sides"].items():
