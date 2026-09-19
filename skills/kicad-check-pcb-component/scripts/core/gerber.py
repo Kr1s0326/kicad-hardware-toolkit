@@ -17,7 +17,49 @@ import math
 import re
 
 __all__ = ["parse_gerber", "parse_drill", "aperture_size", "flashes",
-           "flash_pads", "lines", "region_bbox", "stroked_circles"]
+           "flash_pads", "lines", "region_bbox", "stroked_circles",
+           "Pad", "aperture_shape"]
+
+
+class Pad(tuple):
+    """(x, y, w, h) 四元组，外加一个 .shape 属性。
+
+    为什么是 tuple 子类：**所有解包点（`for x, y, w, h in pads`）都不用改**，
+    只是多带一个属性。
+
+    为什么需要它：以前 flash_pads 只返回 (x,y,w,h)，光圈形状在解析那一步就丢了，
+    画图只能靠"长宽相等就当圆"去猜 —— QFN 的 4x4 方形散热焊盘因此被画成圆形。
+    """
+
+    def __new__(cls, x, y, w, h, shape=""):
+        self = super().__new__(cls, (x, y, w, h))
+        self.shape = shape
+        return self
+
+    def moved(self, dx, dy):
+        return Pad(self[0] - dx, self[1] - dy, self[2], self[3], self.shape)
+
+
+def aperture_shape(apertures, code):
+    """-> "circle" | "rect" | "obround" | "roundrect" | "polygon" | ""（未知）"""
+    a = apertures.get(code)
+    if not a:
+        return ""
+    shape = a[0]
+    s = shape.upper()
+    if "ROUNDRECT" in s:
+        return "roundrect"
+    if shape == "C":
+        return "circle"
+    if shape == "R":
+        return "rect"
+    if shape == "O":
+        return "obround"
+    if shape == "P":
+        return "polygon"
+    if "RECT" in s:
+        return "rect"
+    return ""
 
 
 def aperture_size(apertures, code):
@@ -202,12 +244,13 @@ def flashes(prims):
 
 
 def flash_pads(apertures, prims):
-    """-> [(x, y, width, height)] of all flashed pads"""
+    """-> [Pad(x, y, width, height, shape)] of all flashed pads"""
     out = []
     for p in prims:
         if p[0] == "flash":
             w, h = aperture_size(apertures, p[1])
-            out.append((p[2], p[3], w, h))
+            out.append(Pad(p[2], p[3], w, h,
+                           aperture_shape(apertures, p[1])))
     return out
 
 

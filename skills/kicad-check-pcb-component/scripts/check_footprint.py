@@ -120,8 +120,22 @@ def main():
         spec = os.path.abspath(a.spec)
         sp = json.load(open(spec, encoding="utf-8"))
         sp.setdefault("gerber_dir", gdir)
-        # 把 gerber_dir 写成绝对路径，免得在别的目录下跑
         tmp = os.path.join(out, "_spec_resolved.json")
+        # spec 会被复制到 outdir 再跑，于是里面**相对路径的基准变成了 outdir**。
+        # 结果：用户在 spec 旁边写的 req_image / spec_table_image 全部找不到，
+        # 而 build_xlsx 里 os.path.exists() 不通过就**静默跳过** —— 报告里
+        # "要求:图片" 列一片空白，还没有任何提示。
+        # 所以在复制前把这几类路径按**原 spec 所在目录**解析成绝对路径。
+        sd = os.path.dirname(spec)
+        def _abs(v):
+            return v if (not v or os.path.isabs(v)) else os.path.normpath(
+                os.path.join(sd, v))
+        for key in ("spec_table_image", "gerber_dir", "img_dir"):
+            if sp.get(key):
+                sp[key] = _abs(sp[key])
+        for r in sp.get("rows", []):
+            if r.get("req_image"):
+                r["req_image"] = _abs(r["req_image"])
         sp["gerber_dir"] = gdir
         json.dump(sp, open(tmp, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
         r = run([sys.executable, os.path.join(HERE, "measure_component.py"), tmp,

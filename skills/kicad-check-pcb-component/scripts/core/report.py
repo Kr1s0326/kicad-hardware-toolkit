@@ -147,7 +147,10 @@ def preview_png(xlsx, out=None, img_dir=None):
         y = HEAD_PX + (r - 2) * ROW_H
         v = [ws.cell(row=r, column=c).value for c in range(1, 7)]
         d.text((10, y + 10), str(v[0]), fill="black", font=F)
-        d.text((COLW[0] + 12, y + 10), str(v[2] or ""), fill="black", font=F)
+        # 要求:数值 在第 3 列，起点是前两列宽度之和 ——
+        # 原来写的 COLW[0]+12（=66）落在第 2 列里，于是预览图上
+        # “要求:数值”的文字看着像“要求:图片”列的内容。xlsx 本身是对的。
+        d.text((sum(COLW[:2]) + 8, y + 10), str(v[2] or ""), fill="black", font=F)
         for k, t in enumerate(str(v[4] or "").split("\n")):
             d.text((sum(COLW[:4]) + 8, y + 10 + k * 22), t, fill="black", font=F)
         xr = sum(COLW[:5])

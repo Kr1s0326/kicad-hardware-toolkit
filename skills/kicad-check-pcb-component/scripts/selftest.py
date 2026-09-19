@@ -20,10 +20,12 @@ import os
 import sys
 import traceback
 
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+from core import draw as D                                        # noqa: E402
 from core import gerber as G                                      # noqa: E402
 from core import geometry                                         # noqa: E402
 
@@ -348,6 +350,73 @@ def test_family_dispatch():
         check_exact("dispatch/%s" % want, got, want)
 
 
+def test_pad_shape_and_panels():
+    """两个会让报告**静默画错 / 画空**的坑。
+
+    ① 光圈形状在解析时被丢掉，画图只能靠"长宽相等就当圆"去猜 ——
+       QFN 的 4x4 方形散热焊盘因此被画成圆形。
+    ② 面板的 View 窗口用绝对坐标、焊盘按相对坐标绘制，两者永不相交 ——
+       e / b / L / 列中心距 四个面板全是空白，只剩一条尺寸线悬着。
+
+    测试方法上的两个教训（写成断言前踩过）：
+      * 不能只测 `_is_round()` —— 那样即使 draw_pads() 根本没用它也会绿。
+        必须**真的画一张图**，再看方形焊盘的角上有没有填充（圆会留白）。
+      * 不能只数"灰像素" —— 标题文字的抗锯齿边缘也算灰的，阈值弱到
+        面板全空都能通过。必须数**恰好等于焊盘填充色**的像素。
+    """
+    from core import gerber as G
+    from families import peripheral as fam
+
+    FILL = D.PAD_FILL
+
+    def count_fill(im):
+        """恰好等于焊盘填充色的像素数（抗锯齿的灰不会精确命中）"""
+        return sum(1 for px in im.convert("RGB").getdata() if px == FILL)
+
+    # ① 形状要跟到 Pad 上，而且 draw_pads 必须真的按它画
+    aps = {10: ("C", [0.3]), 11: ("R", [0.8, 0.2]), 12: ("O", [1.0, 0.5])}
+    prims = [("flash", 10, 0.0, 0.0), ("flash", 11, 1.0, 0.0),
+             ("flash", 12, 2.0, 0.0)]
+    got = [getattr(q, "shape", "?") for q in G.flash_pads(aps, prims)]
+    check_exact("pad_shape/① flash_pads 带出光圈形状", got,
+                ["circle", "rect", "obround"])
+    check_exact("pad_shape/① 平移后形状不丢",
+                G.Pad(1, 2, 3, 4, "rect").moved(1, 1).shape, "rect")
+    check_exact("pad_shape/① geometry.move_pads 也保留形状",
+                geometry.move_pads([G.Pad(1, 2, 3, 4, "rect")], 1, 1)[0].shape,
+                "rect")
+
+    # 真的画一张：4x4 方形焊盘，看它的**角**有没有被填充
+    # （内切圆会留白，方矩形会填满 —— 这是决定性的区分）
+    def corner_filled(shape):
+        img, d = D.new_panel("shape probe")
+        V = D.View((-3.0, -3.0, 3.0, 3.0))
+        D.draw_pads(d, V, [G.Pad(0.0, 0.0, 4.0, 4.0, shape)])
+        cx, cy = V.pt(-1.85, -1.85)          # 逼近角点、但在边框内
+        return img.convert("RGB").getpixel((int(cx), int(cy))) == FILL
+
+    check_exact("pad_shape/① 方形焊盘画成方（角上有料）",
+                corner_filled("rect"), True)
+    check_exact("pad_shape/① 圆角矩形按方画（角上有料）",
+                corner_filled("roundrect"), True)
+    check_exact("pad_shape/① 圆形焊盘画成圆（角上留白）",
+                corner_filled("circle"), False)
+    check_exact("pad_shape/① 无形状信息时退回长宽猜测",
+                D._is_round("", 0.3, 0.3), True)
+
+    # ② 面板要真的把焊盘画出来（数恰好等于填充色的像素）
+    qfn = qfn32_like()
+    ctx = ctx_of(qfn, body=(16.4, 11.4, 23.6, 18.6))
+    fam.prepare(ctx)
+    check_exact("panel_pads/② 合成 ctx 的 origin 非零（否则测不出坐标系 bug）",
+                ctx["origin"] != (0.0, 0.0), True)
+    for kind, val in (("lead_pitch", 0.5), ("lead_width", 0.28),
+                      ("lead_length", 1.3), ("pad_span_x", 5.1)):
+        n = count_fill(fam.panel(kind, ctx, {}, val, {}, "T"))
+        check_exact("panel_pads/② %s 面板画出了焊盘（填充像素 %d）" % (kind, n),
+                    n > 200, True)
+
+
 TESTS = [
     ("core: gerber parser", test_gerber_parser),
     ("core: pad classification", test_classify),
@@ -358,6 +427,7 @@ TESTS = [
     ("family: peripheral (SOT-23)", test_peripheral_sot23),
     ("family: peripheral (SOIC-8)", test_peripheral_soic8),
     ("family: chip (0603)", test_chip_0603),
+    ("pad shape / panels", test_pad_shape_and_panels),
 ]
 
 

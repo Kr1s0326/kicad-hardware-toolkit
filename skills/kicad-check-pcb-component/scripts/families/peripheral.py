@@ -141,23 +141,33 @@ def _map_view(ctx, pad=0.5):
 
 def _draw_map(d, V, ctx):
     ox, oy = ctx["origin"]
-    P = [(x - ox, y - oy, w, h) for x, y, w, h in ctx["pads"]]
+    P = G.move_pads(ctx["pads"], ox, oy)
     exposed = ctx["peri"].get("exposed")
     exposed = (exposed["x"] - ox, exposed["y"] - oy, exposed["w"],
-               exposed["h"]) if exposed else None
+               exposed["h"], exposed.get("shape", "")) if exposed else None
     D.draw_pads(d, V, P, exposed=exposed)
     return P
 
 
 def panel(kind, ctx, row, value, extra, sym):
     info = ctx["peri"]
+    # 绘制路径（_draw_map / _map_view）用的是**减掉 origin 的相对坐标**，
+    # 而 info["sides"] / _leads() 里存的是**绝对坐标**。
+    # 踩过的坑：几个面板直接拿绝对坐标去建 View 窗口（还传绝对值给尺寸线），
+    # 于是窗口和焊盘永不相交 —— e / b / L / 列中心距 四个面板全是空白，
+    # 只剩一条尺寸线悬在图上。拿真实封装逐张看图才发现的。
+    _ox, _oy = ctx["origin"]
+
+    def _rel(p):
+        return (p[0] - _ox, p[1] - _oy) + tuple(p[2:])
+
     if kind == "lead_pitch" or kind == "pitch":
         # two neighbouring leads of the left side (or the first side available)
         side = "left" if info["sides"].get("left") else next(iter(info["sides"]))
         leads = sorted(_side_pads(ctx, side, False), key=lambda p: p[1])
         if len(leads) < 2:
             leads = sorted(_leads(ctx), key=lambda p: p[1])
-        a, b = leads[0], leads[1]
+        a, b = _rel(leads[0]), _rel(leads[1])
         vertical = side in ("left", "right")
         if vertical:
             V = D.View((a[0] - a[2] * 2.2, a[1] - a[3] * 1.8,
@@ -176,7 +186,7 @@ def panel(kind, ctx, row, value, extra, sym):
     if kind in ("pad_span_x", "pad_edge_span_x", "pad_span_y", "pad_edge_span_y"):
         edge = "edge" in kind
         axis = 0 if kind.endswith("_x") else 1
-        pad = _leads(ctx)
+        pad = [_rel(q) for q in _leads(ctx)]
         lo = min(p[axis] - (p[2] if axis == 0 else p[3]) / 2 for p in pad) \
             if edge else min(p[axis] for p in pad)
         hi = max(p[axis] + (p[2] if axis == 0 else p[3]) / 2 for p in pad) \
@@ -193,7 +203,7 @@ def panel(kind, ctx, row, value, extra, sym):
         return img
 
     if kind in ("lead_width", "lead_length"):
-        leads = _leads(ctx)
+        leads = [_rel(q) for q in _leads(ctx)]
         p = min(leads, key=lambda q: min(q[2], q[3]))
         x, y, w, h, side = p
         V = D.View((x - w * 2, y - h * 2, x + w * 2, y + h * 2))

@@ -10,7 +10,18 @@ and is reused by all families.
 import math
 
 __all__ = ["dist", "group_rows", "group_cols", "classify_pads", "pad_span",
-           "min_pitch"]
+           "min_pitch", "move_pads"]
+
+
+def move_pads(pads, dx, dy):
+    """平移一组焊盘。
+
+    如果焊盘带着形状（core.gerber.Pad），平移后保留它 —— 否则画图又会退回
+    "长宽相等就当圆"的猜测，QFN 的方形散热盘会被画成圆的。
+    普通四元组也照常支持（返回普通四元组）。
+    """
+    return [p.moved(dx, dy) if hasattr(p, "moved")
+            else (p[0] - dx, p[1] - dy, p[2], p[3]) for p in pads]
 
 
 def dist(a, b):
@@ -84,7 +95,8 @@ def classify_pads(pads, tol=0.05):
            "npads_excl_exposed": len(normal)}
     if exposed is not None:
         out["exposed"] = {"w": exposed[2], "h": exposed[3],
-                          "x": exposed[0], "y": exposed[1]}
+                          "x": exposed[0], "y": exposed[1],
+                          "shape": getattr(exposed, "shape", "")}
     if out["type"] == "grid":
         return out
 

@@ -107,8 +107,25 @@ def main():
             print("warning: spec_table_image not found:", shot)
     for i, r in enumerate(rows):
         if r.get("req_image"):
-            req_imgs[i] = r["req_image"] if os.path.isabs(r["req_image"]) else \
+            f = r["req_image"] if os.path.isabs(r["req_image"]) else \
                 os.path.join(root, r["req_image"])
+            if not os.path.exists(f):
+                # 静默跳过会让「要求:图片」列一片空白，却没有任何提示
+                print("warning: %s 的 req_image 找不到: %s" % (r["symbol"], f))
+            else:
+                # 归一化到 img_dir/req_NN_*.png：report.preview_png 就是按这个
+                # 命名去贴图的，逐行 req_image 不归一化就不出现在预览里。
+                ext = os.path.splitext(f)[1] or ".png"
+                norm = os.path.join(img_dir, "req_%02d_%s%s"
+                                    % (i, r["symbol"].replace("Ø", "Ob")
+                                       .replace("/", "_"), ext))
+                try:
+                    if os.path.abspath(f) != os.path.abspath(norm):
+                        import shutil
+                        shutil.copyfile(f, norm)
+                except Exception as e:                        # noqa: BLE001
+                    print("warning: 要求图片无法归一到 %s: %s" % (norm, e))
+                req_imgs[i] = norm
 
     # ---- 测量 + 画图 + 判定 ----------------------------------------------
     values, results, meas_imgs = [], [], []

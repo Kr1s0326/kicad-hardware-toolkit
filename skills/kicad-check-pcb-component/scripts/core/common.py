@@ -14,6 +14,7 @@ Every family falls back to `common.measure` / `common.panel` for these kinds:
 
 
 from core import draw as D
+from core import geometry as G
 
 __all__ = ["KINDS", "measure", "panel", "na_panel"]
 
@@ -100,13 +101,13 @@ def panel(kind, ctx, row, value, extra, sym):
             V = D.View((bx0 - 0.45, by0 - 0.85, bx1 + 0.45, by1 + 0.3))
             img, d = D.new_panel("%s  本体宽 %.4f mm" % (sym, value))
             d.rectangle([V.pt(bx0, by0), V.pt(bx1, by1)], outline=D.BLUE, width=2)
-            D.draw_pads(d, V, [(x - ox, y - oy, w, h) for x, y, w, h in pads])
+            D.draw_pads(d, V, G.move_pads(pads, ox, oy))
             D.dim_h(d, V, bx0, bx1, by0 - 0.4, "%.4f" % value)
         else:
             V = D.View((bx0 - 1.3, by0 - 0.3, bx1 + 1.3, by1 + 0.3))
             img, d = D.new_panel("%s  本体高 %.4f mm" % (sym, value))
             d.rectangle([V.pt(bx0, by0), V.pt(bx1, by1)], outline=D.BLUE, width=2)
-            D.draw_pads(d, V, [(x - ox, y - oy, w, h) for x, y, w, h in pads])
+            D.draw_pads(d, V, G.move_pads(pads, ox, oy))
             D.dim_v(d, V, by0, by1, bx0 - 0.5, "%.4f" % value)
         return img
     if kind in ("board_w", "board_h", "hole_count", "hole_dia", "hole_offset",
@@ -126,7 +127,7 @@ def panel(kind, ctx, row, value, extra, sym):
     V = D.View((min(xs) - ox - 0.4, min(ys) - oy - 0.4,
                 max(xs) - ox + 0.4, max(ys) - oy + 0.4))
     img, d = D.new_panel("%s = %s" % (sym, value))
-    D.draw_pads(d, V, [(x - ox, y - oy, w, h) for x, y, w, h in pads])
+    D.draw_pads(d, V, G.move_pads(pads, ox, oy))
     return img
 
 

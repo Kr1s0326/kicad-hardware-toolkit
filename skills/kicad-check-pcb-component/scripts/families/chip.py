@@ -107,7 +107,7 @@ def _view(ctx, pad=0.4):
 
 def _draw(d, V, ctx):
     ox, oy = ctx["origin"]
-    D.draw_pads(d, V, [(x - ox, y - oy, w, h) for x, y, w, h in ctx["pads"]])
+    D.draw_pads(d, V, G.move_pads(ctx["pads"], ox, oy))
 
 
 def _extent(ctx):

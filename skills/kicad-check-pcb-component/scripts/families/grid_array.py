@@ -169,7 +169,7 @@ def panel(kind, ctx, row, value, extra, sym):
     a = ctx["array"]
     pads = ctx["pads"]
     ox, oy = ctx["origin"]
-    P = [(x - ox, y - oy, w, h) for x, y, w, h in pads]
+    P = G.move_pads(pads, ox, oy)
     xs = [p[0] for p in P]
     ys = [p[1] for p in P]
     x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)

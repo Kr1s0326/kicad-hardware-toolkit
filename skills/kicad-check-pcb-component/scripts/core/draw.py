@@ -154,10 +154,24 @@ def rect_pads(pads, tol=0.02):
     return out
 
 
+def _is_round(shape, w, h):
+    """该焊盘画成圆还是方？
+
+    有形状信息就照它画；**只有拿不到形状时才退回长宽猜测**（老行为，对
+    BGA 球是对的，对 QFN 的方形散热盘是错的）。
+    """
+    if shape == "circle":
+        return True
+    if shape in ("rect", "roundrect", "obround", "polygon"):
+        return False
+    return abs(w - h) < max(0.02, 0.02 * w)
+
+
 def draw_pads(d, V, pads, hi=None, exposed=None, colour=PAD_FILL):
-    """grey pad map; circles stay circles, rectangular apertures become rects"""
+    """grey pad map; the aperture shape decides circle vs rect"""
     wx0, wy0, wx1, wy1 = V.win
-    for i, (x, y, w, h) in enumerate(pads):
+    for i, pad in enumerate(pads):
+        x, y, w, h = pad[:4]
         if not (wx0 <= x <= wx1 and wy0 <= y <= wy1):      # keep off title/border
             continue
         w = w or 0.2
@@ -166,7 +180,7 @@ def draw_pads(d, V, pads, hi=None, exposed=None, colour=PAD_FILL):
         if exposed is not None and (x, y) == (exposed[0], exposed[1]):
             fill = PAD_FILL_EXPOSED
         cx, cy = V.pt(x, y)
-        if abs(w - h) < max(0.02, 0.02 * w):
+        if _is_round(getattr(pad, "shape", ""), w, h):
             r = max(2.0, w / 2 * V.s)
             d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=fill,
                       outline=(0, 0, 0))
@@ -175,12 +189,18 @@ def draw_pads(d, V, pads, hi=None, exposed=None, colour=PAD_FILL):
             d.rectangle([cx - rx, cy - ry, cx + rx, cy + ry], fill=fill,
                         outline=(0, 0, 0))
     if exposed is not None:
-        x, y, w, h = exposed
+        x, y, w, h = exposed[:4]
+        shape = exposed[4] if len(exposed) > 4 else ""
         if wx0 <= x <= wx1 and wy0 <= y <= wy1:
             cx, cy = V.pt(x, y)
             rx, ry = w / 2 * V.s, h / 2 * V.s
-            d.rectangle([cx - rx, cy - ry, cx + rx, cy + ry], outline=BLUE,
-                        width=2)
+            if _is_round(shape, w, h):              # 散热盘也可能是圆的
+                r = max(rx, ry)
+                d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=BLUE,
+                          width=2)
+            else:
+                d.rectangle([cx - rx, cy - ry, cx + rx, cy + ry], outline=BLUE,
+                            width=2)
 
 
 def dashed(d, V, x0, y0, x1, y1, colour=BLUE):
