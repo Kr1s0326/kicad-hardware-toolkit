@@ -34,8 +34,9 @@ flowchart TD
 图上**粉色是人工环节，有两处，缺一不可**：
 
 * **①→② 写 spec** —— 引脚表半自动（`pdf_pins.py` 只认 TI 那套英文表，
-  中文/其他版式要手抄）；**功能分组和封装数字永远是人判**（手册不写分组，
-  机械图的数字也读不出来）。
+  中文/其他版式要手抄）。**手册不写的语义由 AI/LLM 判**：电气类型、功能分组、
+  每条边放什么 —— 工具几何上算不出来（看不出“VBUS 和 IN+ 不是一回事”），
+  判错了画出来一模一样，只能由 ERC / 契约 / 目视去证伪。
 * **⑦ 人工过目** —— 脚本产出 `look_sheet.png` / `fit3d_*.png` 之后，
   **必须逐张看过才能下结论**。这是设计上的强制项：没过目不算已验证。
 
@@ -123,9 +124,13 @@ ln -s /path/to/kicad-hardware-toolkit/skills/kicad-create-lib-part ~/.claude/ski
 以 `skills/kicad-create-lib-part/assets/part_spec_template.json` 为模板。
 三个部分需要人工从图纸录入：
 
-- `pins[]` —— 手册 Pin Functions 表的引脚号、名称、电气类型、所在边
-- `groups{}` —— 功能分组（手册不提供此信息，须人工判断）
+- `pins[]` —— 手册 Pin Functions 表的引脚号、名称；**电气类型与所在边**
+  （手册不提供，由 AI/LLM 判）
+- `groups{}` —— 功能分组（手册不提供，由 AI/LLM 判）
 - `package{}` —— 手册 Package Outline 与 Example Board Layout 的尺寸
+
+> **引脚间距固定 200 mil / 组间 400 mil，全库统一，不按器件改。**
+> 详见 [skills/kicad-create-lib-part/references/symbol-rules.md](skills/kicad-create-lib-part/references/symbol-rules.md)。
 
 组内顺序由 `pins[]` 的书写顺序决定，组间顺序由 `groups{}` 决定。
 

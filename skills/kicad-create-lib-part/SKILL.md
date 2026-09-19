@@ -59,7 +59,7 @@ python ../kicad-check-pcb-component/scripts/check_footprint.py \
 
 ```
 pins[]          ← 手册的 Pin Functions 表（号 / 名 / 电气类型）
-groups{}        ← 哪些引脚是同一功能（手册不写，人判断）
+groups{}        ← 哪些引脚是同一功能（手册不写，由 AI/LLM 判断）
 symbol_style{}  ← house style（间距 / 分组间距 / 引脚长 / 本体宽 / 对齐方式）
 package{}       ← 手册的 Package Outline + Example Board Layout 图
 ```
@@ -81,16 +81,30 @@ package{}       ← 手册的 Package Outline + Example Board Layout 图
 
 | 规则 | 值 | 依据 |
 |---|---|---|
-| 组内间距 | `pitch_mil`，默认 200 | house style |
-| 组间间距 | `group_gap_mil`，默认 400 | house style |
+| 组内间距 | `pitch_mil` = **200，固定** | **本库的 house style，不按器件改** |
+| 组间间距 | `group_gap_mil` = **400，固定** | 同上 |
 | 引脚长度 | `pin_length_mil`，默认 100 | KiCad 惯例 |
 | 每边对齐 | `side_align`，默认 `top` | **KiCad 官方库惯例**（INA226 就是这样：Vbus 和 A1 都在 7.62） |
 | 上/下电源脚 | `side` 写 `top` / `bottom`，x=0 | 惯例 |
 | 本体 | 由最高的一侧 + 上下各 100 mil 余量推出 | – |
 
-**引脚一多就把 pitch 降到 100 mil。** 官方库对大 MCU 一律用 100 mil：
-STM32F103C8Tx（48 脚）、ATmega2560、PCA9555、TCA9548A 量出来都是
-组内 2.54mm / 组间 5.08mm。49 个引脚按 200 mil 排，本体要长到 130mm 以上。
+### 200 / 400 是固定的，不要改成 100
+
+> **这是本库的风格约定，不是参数。全库统一，不按器件改。**
+
+理由不是"哪个更好看"：同一个库里混着 100 mil 和 200 mil 的符号，
+读图的人每换一颗器件都要重新建立比例感。一致性比单个符号的紧凑更重要。
+
+**不要拿"官方库用 100 mil"当理由改。** 确实如此 —— 量过 STM32F103C8Tx、
+ATmega328P、PCA9555、TCA9548A，官方一律组内 2.54mm / 组间 5.08mm ——
+但**那是 KiCad 的风格，不是我们的**。我们跟自己的库对齐，不跟官方库对齐。
+
+代价要认：引脚多时符号会很大。49 个引脚按 200 mil 排，本体 **55.9 × 121.9 mm**
+（100 mil 能压到 35.6 × 63.5 mm）。**不要为了缩小符号去改 pitch**；
+真嫌大就重新分配引脚到哪条边（把 `groups{}` 的两侧配平），那是布局的事。
+
+历史：CY8C6245 第一版曾改成 100 mil，与库里的 ESP32-S3（200 mil）不一致，
+已改回。`build_spec.py` 的自检现在会把非 200/400 当错误报出来。
 
 ### 本体宽度由三个约束一起定（不是只靠 `body_half_width_mil` 拍）
 
@@ -201,8 +215,10 @@ python scripts/kicad_io.py loadable <path>        # 能否被解析（rc=2 表�
 
 1. 读手册：Pin Functions 表 → `pins[]`；Package Outline + Land Pattern → `package{}`。
    怎么抽见 [references/datasheet-extract.md](references/datasheet-extract.md)。
-2. 判断功能分组 → `groups{}`。（**这一步是人的活**：手册只说"pin 8 是 Analog input"，
-   不说"它和 IN+/IN− 不是一回事"。）
+2. **判断语义** → `pins[].etype`、`pins[].side`、`groups{}`。
+   这三样手册里都没有，**由 AI/LLM 从手册上下文判**（引脚名、所属电源域、
+   复用功能表、电气特性章节）。工具算不出来 —— 几何上看不出"VBUS 和 IN+ 不是一回事"。
+   判错了画出来一模一样，只有 ERC（类型）、契约（号↔盘）和目视（摆放）能证伪。
 3. 生成：`python scripts/make_part.py spec.json --outdir out --verify`
 4. 校验：把 `--verify` 打出来的两条命令跑掉。
 5. 看图：打开校验产生的 `look_sheet.png`。

@@ -126,8 +126,9 @@ assets/
 
 ## 工作流
 
-1. **先填分组。** 拿 `assets/groups_template.json`，按手册的引脚功能把每个引脚的
-   分组写清楚。这一步是人工的，也正是"组间 400 mil"能被校验的前提。
+1. **先填分组 —— 由 AI/LLM 判。** 拿 `assets/groups_template.json`，按手册的
+   引脚功能（引脚名、电源域、复用功能表）把每个引脚的分组写清楚。
+   这一步工具做不了，也正是"组间 400 mil"能被校验的前提。
 2. **跑。**
    ```bash
    python scripts/check_symbol.py lib.kicad_sym --outdir out \

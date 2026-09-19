@@ -460,6 +460,31 @@ def test_grid_warning(tmp):
     check("grid_warn", "200/400 mil -> 不报", not r2["warnings"], str(r2["warnings"]))
 
 
+# 本库的 house style：**200 / 400 固定，全库统一，不按器件改**。
+# 不是审美问题：同一个库里混着 100 和 200，读图的人每换一颗器件都要重新
+# 建立比例感。官方库用 100 mil 是官方的风格，不拿它当理由改。
+def test_house_style_pitch(tmp):
+    s = vssop_spec()
+    s["symbol_style"].pop("pitch_mil", None)
+    s["symbol_style"].pop("group_gap_mil", None)
+    r = gen(s, os.path.join(tmp, "hs1"))
+    st = read(r["sym"])
+    ys = sorted({round(p[1], 4) for p in pins_of_sym(st).values()})
+    dys = sorted({round(b - a, 4) for a, b in zip(ys, ys[1:])})
+    check("house_style", "不给 pitch_mil 时默认 200 mil = 5.08 mm",
+          5.08 in dys, str(dys))
+    check("house_style", "不给 group_gap_mil 时默认 400 mil = 10.16 mm",
+          10.16 in dys, str(dys))
+
+    # 改了要吵一声（不是报错 —— 引脚真多到摆不下的器件留个口子，但不能静默）
+    s2 = vssop_spec()
+    s2["symbol_style"]["pitch_mil"] = 100
+    s2["symbol_style"]["group_gap_mil"] = 200
+    r2 = gen(s2, os.path.join(tmp, "hs2"))
+    check("house_style", "★ 改成 100/200 -> 必须警告",
+          any("house style" in w for w in r2["warnings"]), str(r2["warnings"]))
+
+
 def test_quad_body_and_fields(tmp):
     """四边封装的三个坑，都是拿真实 56 脚 QFN 跑才暴露的。
 
@@ -594,7 +619,8 @@ def main():
     pat = sys.argv[1] if len(sys.argv) > 1 else ""
     tmp = tempfile.mkdtemp(prefix="mkpart_selftest_")
     for fn in (test_pads, test_silk_courtyard, test_symbol_layout, test_quad,
-               test_quad_body_and_fields, test_grid_warning, test_grid_array,
+               test_quad_body_and_fields, test_grid_warning,
+               test_house_style_pitch, test_grid_array,
                test_grid_rejects_garbage, test_idempotent):
         if pat and pat not in fn.__name__:
             continue

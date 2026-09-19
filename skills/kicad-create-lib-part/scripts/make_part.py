@@ -700,6 +700,18 @@ def generate(spec_path, outdir):
     # 100 mil 的整数倍，半个跨度就可能落在 50 mil 网格之外 —— 引脚会连不上线，
     # 而画出来完全正常。这里显式提醒，别让用户从"ERC 报一堆 off_grid"倒推。
     warns = []
+
+    # house style 是 200 / 400 **固定的**，不是每颗器件的参数。
+    # 不是审美问题：同一个库里混着 100 mil 和 200 mil 的符号，读图的人每换
+    # 一颗器件都要重新建立比例感。官方库用 100 mil 是官方的风格，不是我们的。
+    # 这里不报错（留个口子给引脚真的多到摆不下的器件），但要吵一声。
+    _st = spec.get("symbol_style", {})
+    _pm, _gg = _st.get("pitch_mil", 200), _st.get("group_gap_mil", 400)
+    if (_pm, _gg) != (200, 400):
+        warns.append("symbol_style 是 %s/%s mil —— house style 固定 200/400。"
+                     "全库统一比单个符号紧凑重要；真嫌大就重排 groups{} 把两侧配平，"
+                     "不要改 pitch。" % (_pm, _gg))
+
     grid = 50 * MIL               # 50 mil = 1.27 mm（KiCad 默认连接栅格）
     for q in lay["pins"]:
         for axis, v in (("x", q["x"]), ("y", q["y"])):
